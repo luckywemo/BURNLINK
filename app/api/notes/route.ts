@@ -3,9 +3,10 @@ import { ExpirationTime, jsonToPayload } from "@arkiv-network/sdk";
 import { i32 } from "@arkiv-network/sdk/attr";
 import { getRelayClient } from "@/lib/arkiv-relay";
 
-// Allowed lifetimes, in seconds. The note's Arkiv entity is created with this
-// exact Entity Expiration — deletion is enforced by the protocol, not by us.
-const ALLOWED_TTL = new Set([30, 60, 300, 600, 3600, 86400, 604800]);
+// Allowed lifetime range, in seconds. The note's Arkiv entity is created with
+// this exact Entity Expiration — deletion is enforced by the protocol, not us.
+const MIN_TTL = 15;
+const MAX_TTL = 2_592_000; // 30 days
 
 // Payload must stay well under Arkiv's 128 KiB cap once JSON-wrapped.
 const MAX_CT_B64 = 80_000;
@@ -32,7 +33,9 @@ export async function POST(req: NextRequest) {
     !ct ||
     ct.length > MAX_CT_B64 ||
     typeof ttl !== "number" ||
-    !ALLOWED_TTL.has(ttl) ||
+    !Number.isInteger(ttl) ||
+    ttl < MIN_TTL ||
+    ttl > MAX_TTL ||
     (once && (typeof bh !== "string" || bh.length > 64))
   ) {
     return NextResponse.json({ error: "invalid note" }, { status: 400 });

@@ -13,7 +13,7 @@ Everything below is on the **Tiramisu testnet** (chain ID `7738577`).
 | `attributes.type` | `str` `"burnlink"` | entity type discriminator |
 | `attributes.v` | `i32` `1` | schema version (numeric, in case we ever need range queries) |
 | `attributes.mode` | `str` `"once"` \| `"timed"` | burn-after-read vs expire-only. Three attributes total — deliberately few (privacy pillar: what the explorer shows is minimal). |
-| `expires` | `ExpirationTime.fromSeconds(ttl)`, ttl ∈ {600, 3600, 86400, 604800} | User-chosen Entity Expiration — the protocol deletes the ciphertext, not us. |
+| `expires` | `ExpirationTime.fromSeconds(ttl)`, ttl ∈ [15s, 30d] — presets or custom | User-chosen Entity Expiration — the protocol deletes the ciphertext, not us. |
 
 **`bh` — the burn-capability hash.** Entity keys are enumerable (anyone can list
 the relay's entities via `$creator`), so a bare "delete by key" endpoint would
