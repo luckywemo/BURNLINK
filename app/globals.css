@@ -24,3 +24,15 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+@keyframes emberPulse {
+  0%, 100% { box-shadow: 0 0 24px rgba(249,115,22,0.18), inset 0 0 24px rgba(249,115,22,0.05); }
+  50% { box-shadow: 0 0 70px rgba(249,115,22,0.4), inset 0 0 40px rgba(249,115,22,0.12); }
+}
+.animate-ember { animation: emberPulse 2.6s ease-in-out infinite; }
+
+@keyframes burnBar {
+  from { width: 100%; }
+  to { width: 0%; }
+}
+.animate-burnbar { animation: burnBar 4.5s linear forwards; }

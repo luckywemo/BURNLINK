@@ -4,28 +4,28 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import gsap from "gsap";
 import EmberField from "@/components/EmberField";
+import ScrambleText from "@/components/ScrambleText";
 import { arkivPublic } from "@/lib/arkiv-public";
 import { decryptNote } from "@/lib/note-crypto";
 
-type State =
-  | { kind: "loading" }
-  | { kind: "no-key" }
-  | { kind: "burned" }
-  | {
-      kind: "open";
-      text: string;
-      once: boolean;
-      creator?: string;
-      expiresAt?: bigint;
-      burnTx?: string;
-    };
+type Phase = "loading" | "no-key" | "gone" | "reading" | "burning" | "dead";
 
 const EXPLORER = "https://tiramisu.explorer.arkiv.network";
+const READ_SECONDS = 4.5; // how long the note stays readable before igniting
 
 export default function NoteClient({ noteKey }: { noteKey: string }) {
-  const [s, setS] = useState<State>({ kind: "loading" });
-  const noteRef = useRef<HTMLDivElement>(null);
-  const bannerRef = useRef<HTMLDivElement>(null);
+  const [phase, setPhase] = useState<Phase>("loading");
+  const [note, setNote] = useState<{
+    text: string;
+    once: boolean;
+    creator?: string;
+    expiresAt?: bigint;
+  } | null>(null);
+  const [burnTx, setBurnTx] = useState<string>();
+  const [revealed, setRevealed] = useState(false);
+  const [ignite, setIgnite] = useState(false);
+  const cardRef = useRef<HTMLDivElement>(null);
+  const burnedBurstDone = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -34,14 +34,14 @@ export default function NoteClient({ noteKey }: { noteKey: string }) {
       const urlKey = hash.get("k");
       const burnToken = hash.get("b") ?? "";
       if (!urlKey) {
-        setS({ kind: "no-key" });
+        setPhase("no-key");
         return;
       }
       let entity;
       try {
         entity = await arkivPublic.getEntity(noteKey as `0x${string}`);
       } catch {
-        setS({ kind: "burned" });
+        setPhase("gone");
         return;
       }
       if (cancelled) return;
@@ -51,36 +51,32 @@ export default function NoteClient({ noteKey }: { noteKey: string }) {
       const modeAttr = entity.attributes?.mode as
         | { value?: string }
         | undefined;
-      const mode = modeAttr?.value ?? "timed";
+      const once = (modeAttr?.value ?? "timed") === "once";
 
-      const base = {
-        kind: "open" as const,
+      setNote({
         text,
-        once: mode === "once",
+        once,
         creator: entity.creator,
         expiresAt: entity.expiresAt,
-      };
+      });
+      setPhase("reading");
 
-      if (mode === "once") {
-        // reveal first, burn a beat later — the user must see the note
-        setS(base);
-        await new Promise((r) => setTimeout(r, 1200));
-        try {
-          const r = await fetch(`/api/notes/${noteKey}/burn`, {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ b: burnToken }),
-          });
-          const { txHash } = await r.json();
-          if (!cancelled) {
-            window.dispatchEvent(new Event("burnlink:burst"));
-            setS({ ...base, burnTx: txHash });
+      if (once) {
+        // fire the real on-chain deletion shortly after the reveal starts —
+        // the visuals lag behind, the delete does not
+        setTimeout(async () => {
+          try {
+            const r = await fetch(`/api/notes/${noteKey}/burn`, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ b: burnToken }),
+            });
+            const { txHash } = await r.json();
+            if (!cancelled) setBurnTx(txHash);
+          } catch {
+            /* deletion races are fine — entity is gone either way */
           }
-        } catch {
-          if (!cancelled) setS(base);
-        }
-      } else if (!cancelled) {
-        setS(base);
+        }, 1200);
       }
     })();
     return () => {
@@ -88,42 +84,55 @@ export default function NoteClient({ noteKey }: { noteKey: string }) {
     };
   }, [noteKey]);
 
-  // reveal animation when the note opens
+  // after the scramble reveal, once-notes count down then ignite
   useEffect(() => {
-    if (s.kind === "open" && noteRef.current) {
-      gsap.from(noteRef.current, {
-        opacity: 0,
-        y: 14,
-        duration: 0.6,
-        ease: "power2.out",
-      });
-    }
-  }, [s.kind]);
+    if (!revealed || !note?.once) return;
+    const t = setTimeout(() => {
+      setIgnite(true);
+      setPhase("burning");
+      window.dispatchEvent(new Event("burnlink:burst"));
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          const words = gsap.utils.toArray<HTMLElement>(".burn-word");
+          const tl = gsap.timeline({
+            onComplete: () => setPhase("dead"),
+          });
+          tl.to(
+            words,
+            { color: "#fb923c", duration: 0.25, stagger: 0.004 },
+            0
+          ).to(
+            words,
+            {
+              y: () => -(70 + Math.random() * 180),
+              x: () => (Math.random() - 0.5) * 140,
+              opacity: 0,
+              filter: "blur(6px)",
+              duration: 1.0,
+              ease: "power2.in",
+              stagger: { each: 0.006, from: "random" },
+            },
+            0.25
+          );
+          if (cardRef.current) {
+            tl.to(
+              cardRef.current,
+              { opacity: 0, scale: 0.97, duration: 0.4 },
+              1.1
+            );
+          }
+        })
+      );
+    }, READ_SECONDS * 1000);
+    return () => clearTimeout(t);
+  }, [revealed, note]);
 
-  // scorch the card + slide the banner in once the burn tx lands
-  const burned = s.kind === "open" && !!s.burnTx;
   useEffect(() => {
-    if (burned) {
-      if (noteRef.current) {
-        gsap.to(noteRef.current, {
-          borderColor: "#f97316",
-          boxShadow: "0 0 60px rgba(249,115,22,0.35)",
-          duration: 0.5,
-          yoyo: true,
-          repeat: 1,
-          ease: "power2.inOut",
-        });
-      }
-      if (bannerRef.current) {
-        gsap.from(bannerRef.current, {
-          opacity: 0,
-          y: -10,
-          duration: 0.6,
-          ease: "power3.out",
-        });
-      }
+    if ((phase === "gone" || phase === "dead") && !burnedBurstDone.current) {
+      burnedBurstDone.current = true;
+      window.dispatchEvent(new Event("burnlink:burst"));
     }
-  }, [burned]);
+  }, [phase]);
 
   return (
     <main className="relative z-10 mx-auto flex min-h-dvh max-w-2xl flex-col px-6 py-16">
@@ -135,11 +144,19 @@ export default function NoteClient({ noteKey }: { noteKey: string }) {
         </h1>
       </header>
 
-      {s.kind === "loading" && (
-        <p className="text-zinc-400">Fetching ciphertext from Arkiv…</p>
+      {phase === "loading" && (
+        <div className="space-y-3">
+          <p className="animate-ember inline-block rounded-lg border border-orange-500/40 bg-zinc-900/80 px-5 py-3 text-orange-200">
+            Breaking the seal…
+          </p>
+          <p className="text-xs text-zinc-500">
+            Fetching ciphertext straight from the chain — no login, no
+            permission.
+          </p>
+        </div>
       )}
 
-      {s.kind === "no-key" && (
+      {phase === "no-key" && (
         <div className="space-y-3">
           <p className="text-xl font-semibold">No key in this link.</p>
           <p className="text-zinc-400">
@@ -149,57 +166,85 @@ export default function NoteClient({ noteKey }: { noteKey: string }) {
         </div>
       )}
 
-      {s.kind === "burned" && (
-        <div className="space-y-3">
-          <p className="text-xl font-semibold text-orange-400">
-            This note is gone.
-          </p>
-          <p className="text-zinc-400">
-            Burned after reading or expired by Entity Expiration — deleted by
-            the Arkiv protocol, not by someone&apos;s promise. Nothing
-            decryptable remains on any server.
-          </p>
+      {(phase === "gone" || phase === "dead") && (
+        <div className="space-y-4">
+          <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-6 backdrop-blur-sm">
+            <p className="text-xl font-semibold text-orange-400">
+              This note is gone.
+            </p>
+            <p className="mt-2 text-zinc-400">
+              Burned after reading or expired by Entity Expiration — deleted by
+              the Arkiv protocol, not by someone&apos;s promise. Nothing
+              decryptable remains anywhere.
+            </p>
+          </div>
+          {burnTx ? (
+            <p className="text-xs text-zinc-500">
+              Deletion tx:{" "}
+              <a
+                className="font-mono underline hover:text-zinc-300"
+                href={`${EXPLORER}/tx/${burnTx}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {burnTx}
+              </a>
+            </p>
+          ) : phase === "dead" ? (
+            <p className="text-xs text-zinc-600">
+              Confirming deletion on-chain…
+            </p>
+          ) : null}
         </div>
       )}
 
-      {s.kind === "open" && (
+      {(phase === "reading" || phase === "burning") && note && (
         <div className="space-y-6">
-          {s.once && (
-            <div
-              ref={bannerRef}
-              className={`rounded-lg border p-4 text-sm transition-colors ${
-                s.burnTx
-                  ? "border-orange-500/40 bg-orange-500/10 text-orange-200"
-                  : "border-zinc-700 bg-zinc-900 text-zinc-400"
-              }`}
-            >
-              {s.burnTx ? (
-                <>
-                  This note has been burned. Reload this link — it will be
-                  gone. Deletion tx:{" "}
-                  <a
-                    className="underline"
-                    href={`${EXPLORER}/tx/${s.burnTx}`}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    {s.burnTx.slice(0, 18)}…
-                  </a>
-                </>
-              ) : (
-                "Read it once — this note is burning…"
-              )}
+          {note.once && revealed && (
+            <div className="space-y-2">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-orange-400">
+                {ignite ? "burning" : "this note burns after you read it"}
+              </p>
+              <div className="h-0.5 overflow-hidden rounded-full bg-zinc-800">
+                {!ignite && (
+                  <div className="animate-burnbar h-full bg-gradient-to-r from-orange-500 to-red-600" />
+                )}
+              </div>
             </div>
           )}
 
           <div
-            ref={noteRef}
-            className="whitespace-pre-wrap rounded-lg border border-zinc-800 bg-zinc-900 p-5 text-zinc-100"
+            ref={cardRef}
+            className="relative rounded-lg border border-zinc-800 bg-zinc-900/80 p-5 backdrop-blur-sm"
           >
-            {s.text}
+            {ignite ? (
+              <div className="pointer-events-none font-mono text-sm text-zinc-100">
+                {note.text
+                  .split(/\s+/)
+                  .slice(0, 200)
+                  .map((w, i) => (
+                    <span key={i} className="burn-word inline-block">
+                      {w}&nbsp;
+                    </span>
+                  ))}
+              </div>
+            ) : (
+              <div className="whitespace-pre-wrap font-mono text-sm text-zinc-100">
+                {revealed ? (
+                  note.text
+                ) : (
+                  <ScrambleText
+                    text={note.text}
+                    speed={22}
+                    per={Math.max(2, Math.ceil(note.text.length / 80))}
+                    onDone={() => setRevealed(true)}
+                  />
+                )}
+              </div>
+            )}
           </div>
 
-          {!s.once && (
+          {!note.once && (
             <p className="text-sm text-zinc-400">
               This note dies when its Arkiv entity expires — enforced by the
               protocol.
@@ -212,14 +257,14 @@ export default function NoteClient({ noteKey }: { noteKey: string }) {
             </summary>
             <ul className="mt-2 space-y-1 break-all font-mono">
               <li>entity: {noteKey}</li>
-              {s.creator && <li>created by: {s.creator}</li>}
-              {s.expiresAt !== undefined && (
-                <li>expires at block: {s.expiresAt.toString()}</li>
+              {note.creator && <li>created by: {note.creator}</li>}
+              {note.expiresAt !== undefined && (
+                <li>expires at block: {note.expiresAt.toString()}</li>
               )}
               <li>
                 <a
                   className="underline hover:text-zinc-300"
-                  href={`${EXPLORER}/address/${s.creator}`}
+                  href={`${EXPLORER}/address/${note.creator}`}
                   target="_blank"
                   rel="noreferrer"
                 >

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import gsap from "gsap";
 import EmberField from "@/components/EmberField";
+import ScrambleText from "@/components/ScrambleText";
 import { encryptNote, randomUrlToken, sha256b64 } from "@/lib/note-crypto";
 
 const TTLS = [
@@ -25,6 +26,7 @@ export default function Home() {
   const [err, setErr] = useState("");
   const headerRef = useRef<HTMLElement>(null);
   const resultRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!headerRef.current) return;
@@ -53,25 +55,50 @@ export default function Home() {
     return new Promise((resolve) => {
       setBurning(true);
       window.dispatchEvent(new Event("burnlink:burst"));
-      // let React paint the word layer, then scatter it upward like embers
       requestAnimationFrame(() =>
         requestAnimationFrame(() => {
           const words = gsap.utils.toArray<HTMLElement>(".burn-word");
-          if (!words.length) return resolve();
-          gsap.to(words, {
-            y: () => -(60 + Math.random() * 160),
-            x: () => (Math.random() - 0.5) * 120,
-            opacity: 0,
-            filter: "blur(6px)",
-            color: "#fb923c",
-            duration: 1.15,
-            ease: "power2.in",
-            stagger: { each: 0.006, from: "random" },
-            onComplete: () => resolve(),
-          });
+          const composer = composerRef.current;
+          const tl = gsap.timeline({ onComplete: resolve });
+          // ignite the edges first
+          if (composer) {
+            tl.to(composer, {
+              boxShadow: "0 0 70px rgba(249,115,22,0.5)",
+              borderColor: "#f97316",
+              duration: 0.35,
+              ease: "power2.in",
+            });
+          }
+          if (words.length) {
+            // chars catch fire, then scatter upward as embers
+            tl.to(
+              words,
+              { color: "#fb923c", duration: 0.25, stagger: 0.004 },
+              0.15
+            ).to(
+              words,
+              {
+                y: () => -(70 + Math.random() * 180),
+                x: () => (Math.random() - 0.5) * 140,
+                opacity: 0,
+                filter: "blur(6px)",
+                duration: 1.0,
+                ease: "power2.in",
+                stagger: { each: 0.005, from: "random" },
+              },
+              0.4
+            );
+          }
+          if (composer) {
+            tl.to(
+              composer,
+              { opacity: 0, y: -18, duration: 0.4, ease: "power2.in" },
+              1.15
+            );
+          }
         })
       );
-      setTimeout(resolve, 1600); // hard cap — never hang the UX
+      setTimeout(resolve, 2200); // hard cap — never hang the UX
     });
   }
 
@@ -123,14 +150,16 @@ export default function Home() {
 
       {!result ? (
         <div className="space-y-5">
-          <div className="relative">
+          <div ref={composerRef} className="relative rounded-lg">
             <textarea
               value={text}
               onChange={(e) => setText(e.target.value)}
               rows={6}
               maxLength={12000}
               placeholder="Type something that shouldn't live forever…"
-              className={`w-full rounded-lg border border-zinc-800 bg-zinc-900 p-4 font-mono text-sm text-zinc-100 outline-none placeholder:text-zinc-600 focus:border-orange-500/60 ${burning ? "opacity-0" : ""}`}
+              className={`w-full rounded-lg border border-zinc-800 bg-zinc-900/80 p-4 font-mono text-sm text-zinc-100 outline-none backdrop-blur-sm placeholder:text-zinc-600 focus:border-orange-500/60 ${
+                burning ? "opacity-0" : ""
+              }`}
             />
             {burning && (
               <div className="pointer-events-none absolute inset-0 overflow-visible p-4 font-mono text-sm">
@@ -152,7 +181,7 @@ export default function Home() {
               <select
                 value={ttl}
                 onChange={(e) => setTtl(Number(e.target.value))}
-                className="rounded-md border border-zinc-800 bg-zinc-900 px-2 py-1.5 text-zinc-100 outline-none"
+                className="rounded-md border border-zinc-800 bg-zinc-900/80 px-2 py-1.5 text-zinc-100 outline-none"
               >
                 {TTLS.map((t) => (
                   <option key={t.value} value={t.value}>
@@ -176,7 +205,7 @@ export default function Home() {
           <button
             onClick={burn}
             disabled={busy || !text.trim()}
-            className="w-full rounded-lg bg-orange-500 px-6 py-3 font-semibold text-zinc-950 transition hover:bg-orange-400 disabled:cursor-not-allowed disabled:opacity-40"
+            className="w-full rounded-lg bg-orange-500 px-6 py-3 font-semibold text-zinc-950 transition hover:bg-orange-400 hover:shadow-[0_0_40px_rgba(249,115,22,0.4)] disabled:cursor-not-allowed disabled:opacity-40"
           >
             {busy ? "Sealing…" : "Seal & burn"}
           </button>
@@ -184,22 +213,30 @@ export default function Home() {
         </div>
       ) : (
         <div ref={resultRef} className="space-y-5">
-          <p className="text-zinc-300">
-            Sealed. The key is inside the link — it never touched a server.
-          </p>
-          <div className="break-all rounded-lg border border-zinc-800 bg-zinc-900 p-4 font-mono text-sm text-orange-300">
-            {result.link}
+          <div className="animate-ember rounded-xl border border-orange-500/50 bg-zinc-900/80 p-6 backdrop-blur-sm">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-orange-400">
+              sealed — your link is forged
+            </p>
+            <div className="mt-3 break-all font-mono text-sm leading-relaxed text-orange-200">
+              <ScrambleText text={result.link} speed={18} per={4} />
+            </div>
+            <p className="mt-3 text-xs text-zinc-500">
+              The decryption key lives after the <code>#</code> — it never
+              touched a server or the chain.
+            </p>
           </div>
+
           <button
             onClick={() => {
               navigator.clipboard.writeText(result.link);
               setCopied(true);
               setTimeout(() => setCopied(false), 1500);
             }}
-            className="w-full rounded-lg border border-zinc-700 px-6 py-3 font-semibold text-zinc-100 transition hover:border-orange-500/60"
+            className="w-full rounded-lg bg-orange-500 px-6 py-3 font-semibold text-zinc-950 transition hover:bg-orange-400"
           >
-            {copied ? "Copied" : "Copy link"}
+            {copied ? "Copied — send it" : "Copy link"}
           </button>
+
           <p className="text-xs text-zinc-500">
             Entity expires at block {result.expiresAt} ·{" "}
             <a
