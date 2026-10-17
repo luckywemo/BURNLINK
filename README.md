@@ -56,3 +56,7 @@ Requires Node ≥ 20 and [`@arkiv-network/sdk@0.8.1`](https://www.npmjs.com/pack
 - Demo data is **synthetic** — per the rules, never put real secrets in a note.
 
 MIT © BurnLink contributors 2026
+
+*Asset note:* `public/fire-bg.mp4` is a third-party "fiery background"
+animation sourced via Pinterest (pin.it/Tqb7jF9At) — used for hackathon demo
+purposes; verify its licence before production reuse.
