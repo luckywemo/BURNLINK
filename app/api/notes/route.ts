@@ -5,7 +5,7 @@ import { getRelayClient } from "@/lib/arkiv-relay";
 
 // Allowed lifetimes, in seconds. The note's Arkiv entity is created with this
 // exact Entity Expiration — deletion is enforced by the protocol, not by us.
-const ALLOWED_TTL = new Set([600, 3600, 86400, 604800]);
+const ALLOWED_TTL = new Set([30, 60, 300, 600, 3600, 86400, 604800]);
 
 // Payload must stay well under Arkiv's 128 KiB cap once JSON-wrapped.
 const MAX_CT_B64 = 80_000;

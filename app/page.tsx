@@ -7,10 +7,13 @@ import ScrambleText from "@/components/ScrambleText";
 import { encryptNote, randomUrlToken, sha256b64 } from "@/lib/note-crypto";
 
 const TTLS = [
-  { label: "10 minutes", value: 600 },
-  { label: "1 hour", value: 3600 },
-  { label: "24 hours", value: 86400 },
-  { label: "7 days", value: 604800 },
+  { label: "30s", value: 30 },
+  { label: "1m", value: 60 },
+  { label: "5m", value: 300 },
+  { label: "10m", value: 600 },
+  { label: "1h", value: 3600 },
+  { label: "24h", value: 86400 },
+  { label: "7d", value: 604800 },
 ];
 
 type Result = { link: string; txHash: string; expiresAt: string };
@@ -176,20 +179,25 @@ export default function Home() {
           </div>
 
           <div className="flex flex-wrap items-center gap-4 text-sm">
-            <label className="flex items-center gap-2 text-zinc-400">
-              dies in
-              <select
-                value={ttl}
-                onChange={(e) => setTtl(Number(e.target.value))}
-                className="rounded-md border border-zinc-800 bg-zinc-900/80 px-2 py-1.5 text-zinc-100 outline-none"
-              >
+            <div className="flex items-center gap-2 text-zinc-400">
+              ignite in
+              <div className="flex overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900/80">
                 {TTLS.map((t) => (
-                  <option key={t.value} value={t.value}>
+                  <button
+                    key={t.value}
+                    type="button"
+                    onClick={() => setTtl(t.value)}
+                    className={`px-3 py-1.5 font-mono text-xs transition ${
+                      ttl === t.value
+                        ? "bg-orange-500 text-zinc-950 shadow-[0_0_16px_rgba(249,115,22,0.45)]"
+                        : "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
+                    }`}
+                  >
                     {t.label}
-                  </option>
+                  </button>
                 ))}
-              </select>
-            </label>
+              </div>
+            </div>
 
             <label className="flex cursor-pointer items-center gap-2 text-zinc-400">
               <input

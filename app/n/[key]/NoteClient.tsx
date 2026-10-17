@@ -24,6 +24,7 @@ export default function NoteClient({ noteKey }: { noteKey: string }) {
   const [burnTx, setBurnTx] = useState<string>();
   const [revealed, setRevealed] = useState(false);
   const [ignite, setIgnite] = useState(false);
+  const [secsLeft, setSecsLeft] = useState<number | null>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const burnedBurstDone = useRef(false);
 
@@ -60,6 +61,17 @@ export default function NoteClient({ noteKey }: { noteKey: string }) {
         expiresAt: entity.expiresAt,
       });
       setPhase("reading");
+
+      if (!once && entity.expiresAt !== undefined) {
+        try {
+          const t = await arkivPublic.getBlockTiming();
+          setSecsLeft(
+            Math.max(0, Number(entity.expiresAt - t.currentBlock) * 2)
+          );
+        } catch {
+          /* countdown is cosmetic */
+        }
+      }
 
       if (once) {
         // fire the real on-chain deletion shortly after the reveal starts —
@@ -126,6 +138,20 @@ export default function NoteClient({ noteKey }: { noteKey: string }) {
     }, READ_SECONDS * 1000);
     return () => clearTimeout(t);
   }, [revealed, note]);
+
+  // timed notes: tick down to $expiresAt, then the entity is gone
+  useEffect(() => {
+    if (secsLeft === null || phase !== "reading") return;
+    if (secsLeft <= 0) {
+      arkivPublic
+        .getEntity(noteKey as `0x${string}`)
+        .then(() => setSecsLeft(0))
+        .catch(() => setPhase("gone"));
+      return;
+    }
+    const t = setTimeout(() => setSecsLeft((v) => (v ?? 1) - 1), 1000);
+    return () => clearTimeout(t);
+  }, [secsLeft, phase, noteKey]);
 
   useEffect(() => {
     if ((phase === "gone" || phase === "dead") && !burnedBurstDone.current) {
@@ -245,10 +271,31 @@ export default function NoteClient({ noteKey }: { noteKey: string }) {
           </div>
 
           {!note.once && (
-            <p className="text-sm text-zinc-400">
-              This note dies when its Arkiv entity expires — enforced by the
-              protocol.
-            </p>
+            <div className="space-y-2">
+              <p className="text-sm text-zinc-400">
+                {secsLeft !== null ? (
+                  <>
+                    This note self-destructs in{" "}
+                    <span className="font-mono text-orange-400">
+                      {secsLeft}s
+                    </span>{" "}
+                    — Entity Expiration, enforced by the protocol.
+                  </>
+                ) : (
+                  "This note dies when its Arkiv entity expires — enforced by the protocol."
+                )}
+              </p>
+              {secsLeft !== null && (
+                <div className="h-0.5 overflow-hidden rounded-full bg-zinc-800">
+                  <div
+                    className="h-full bg-gradient-to-r from-orange-500 to-red-600 transition-all duration-1000 ease-linear"
+                    style={{
+                      width: `${Math.min(100, (secsLeft / 30) * 100)}%`,
+                    }}
+                  />
+                </div>
+              )}
+            </div>
           )}
 
           <details className="text-xs text-zinc-500">
