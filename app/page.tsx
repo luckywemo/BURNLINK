@@ -5,6 +5,8 @@ import gsap from "gsap";
 import EmberField from "@/components/EmberField";
 import ScrambleText from "@/components/ScrambleText";
 import { encryptNote, randomUrlToken, sha256b64 } from "@/lib/note-crypto";
+import { useReducedMotion } from "@/lib/use-reduced-motion";
+import { EMBER, EMBER_SOFT, EMBER_GLOW } from "@/lib/tokens";
 
 const TTLS = [
   { label: "30s", value: 30 },
@@ -25,6 +27,27 @@ const UNITS = [
 const MIN_TTL = 15;
 const MAX_TTL = 2_592_000; // 30 days
 
+const STEPS = [
+  {
+    n: "1",
+    title: "Encrypts in your browser",
+    body: "AES-GCM-256, on your device. The key lives after the # in your link — it never reaches a server or the chain.",
+  },
+  {
+    n: "2",
+    title: "Stored as an Arkiv entity",
+    body: "Only ciphertext goes on the Tiramisu testnet — publicly readable, permanently unreadable without your link.",
+  },
+  {
+    n: "3",
+    title: "Deleted by the protocol",
+    body: "Reading burns it, or Entity Expiration kills it on schedule. The network enforces deletion — no one can keep a copy.",
+  },
+];
+
+const FOCUS =
+  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70";
+
 type Result = { link: string; txHash: string; expiresAt: string };
 
 export default function Home() {
@@ -42,9 +65,10 @@ export default function Home() {
   const headerRef = useRef<HTMLElement>(null);
   const resultRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
+  const reduced = useReducedMotion();
 
   useEffect(() => {
-    if (!headerRef.current) return;
+    if (reduced || !headerRef.current) return;
     gsap.from(headerRef.current.children, {
       y: 26,
       opacity: 0,
@@ -52,21 +76,21 @@ export default function Home() {
       stagger: 0.14,
       ease: "power3.out",
     });
-  }, []);
+  }, [reduced]);
 
   useEffect(() => {
-    if (result && resultRef.current) {
-      gsap.from(resultRef.current.children, {
-        y: 22,
-        opacity: 0,
-        duration: 0.55,
-        stagger: 0.08,
-        ease: "power3.out",
-      });
-    }
-  }, [result]);
+    if (reduced || !result || !resultRef.current) return;
+    gsap.from(resultRef.current.children, {
+      y: 22,
+      opacity: 0,
+      duration: 0.55,
+      stagger: 0.08,
+      ease: "power3.out",
+    });
+  }, [result, reduced]);
 
   function playBurnAnimation(): Promise<void> {
+    if (reduced) return Promise.resolve();
     return new Promise((resolve) => {
       setBurning(true);
       window.dispatchEvent(new Event("burnlink:burst"));
@@ -78,8 +102,8 @@ export default function Home() {
           // ignite the edges first
           if (composer) {
             tl.to(composer, {
-              boxShadow: "0 0 70px rgba(249,115,22,0.5)",
-              borderColor: "#f97316",
+              boxShadow: `0 0 70px ${EMBER_GLOW}`,
+              borderColor: EMBER,
               duration: 0.35,
               ease: "power2.in",
             });
@@ -88,7 +112,7 @@ export default function Home() {
             // chars catch fire, then scatter upward as embers
             tl.to(
               words,
-              { color: "#fb923c", duration: 0.25, stagger: 0.004 },
+              { color: EMBER_SOFT, duration: 0.25, stagger: 0.004 },
               0.15
             ).to(
               words,
@@ -149,30 +173,47 @@ export default function Home() {
     }
   }
 
+  const segmentCls = (active: boolean) =>
+    `px-2.5 py-1.5 font-mono text-xs transition sm:px-3 ${FOCUS} ${
+      active
+        ? "bg-primary text-primary-foreground shadow-[0_0_16px_rgba(249,115,22,0.45)]"
+        : "text-muted-foreground hover:bg-border hover:text-foreground"
+    }`;
+
   return (
     <main className="relative z-10 mx-auto flex min-h-dvh max-w-2xl flex-col px-6 py-16">
       <EmberField />
 
       <header ref={headerRef} className="mb-10">
         <h1 className="text-4xl font-bold tracking-tight">
-          Burn<span className="text-orange-500">Link</span>
+          Burn<span className="text-primary">Link</span>
         </h1>
-        <p className="mt-3 text-zinc-400">
+        <p className="mt-3 text-muted-foreground">
           A note that provably dies. Encrypted in your browser, stored as an
           Arkiv entity, deleted by the protocol — not by a promise.
         </p>
       </header>
 
+      <div aria-live="polite" className="sr-only">
+        {busy ? "Sealing your note on-chain." : ""}
+        {result ? "Note sealed. Link generated." : ""}
+        {err}
+      </div>
+
       {!result ? (
         <div className="space-y-5">
           <div ref={composerRef} className="relative rounded-lg">
+            <label htmlFor="note" className="sr-only">
+              Note text
+            </label>
             <textarea
+              id="note"
               value={text}
               onChange={(e) => setText(e.target.value)}
               rows={6}
               maxLength={12000}
               placeholder="Type something that shouldn't live forever…"
-              className={`w-full rounded-lg border border-zinc-800 bg-zinc-900/80 p-4 font-mono text-sm text-zinc-100 outline-none backdrop-blur-sm placeholder:text-zinc-600 focus:border-orange-500/60 ${
+              className={`w-full rounded-lg border border-border bg-card/80 p-4 font-mono text-sm text-foreground outline-none backdrop-blur-sm transition placeholder:text-subtle focus:border-primary/60 ${
                 burning ? "opacity-0" : ""
               }`}
             />
@@ -191,34 +232,32 @@ export default function Home() {
           </div>
 
           <div className="flex flex-wrap items-center gap-4 text-sm">
-            <div className="flex items-center gap-2 text-zinc-400">
-              ignite in
-              <div className="flex overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900/80">
+            <div className="flex flex-wrap items-center gap-2 text-muted-foreground">
+              <span id="ignite-label">ignite in</span>
+              <div
+                role="group"
+                aria-labelledby="ignite-label"
+                className="flex flex-wrap overflow-hidden rounded-lg border border-border bg-card/80"
+              >
                 {TTLS.map((t) => (
                   <button
                     key={t.value}
                     type="button"
+                    aria-pressed={!custom && ttl === t.value}
                     onClick={() => {
                       setCustom(false);
                       setTtl(t.value);
                     }}
-                    className={`px-3 py-1.5 font-mono text-xs transition ${
-                      !custom && ttl === t.value
-                        ? "bg-orange-500 text-zinc-950 shadow-[0_0_16px_rgba(249,115,22,0.45)]"
-                        : "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
-                    }`}
+                    className={segmentCls(!custom && ttl === t.value)}
                   >
                     {t.label}
                   </button>
                 ))}
                 <button
                   type="button"
+                  aria-pressed={custom}
                   onClick={() => setCustom(true)}
-                  className={`px-3 py-1.5 font-mono text-xs transition ${
-                    custom
-                      ? "bg-orange-500 text-zinc-950 shadow-[0_0_16px_rgba(249,115,22,0.45)]"
-                      : "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
-                  }`}
+                  className={segmentCls(custom)}
                 >
                   custom
                 </button>
@@ -228,6 +267,7 @@ export default function Home() {
                   <input
                     type="number"
                     min={1}
+                    aria-label="Custom duration"
                     value={customVal}
                     onChange={(e) => {
                       setCustomVal(e.target.value);
@@ -241,9 +281,10 @@ export default function Home() {
                         );
                       }
                     }}
-                    className="w-20 rounded-md border border-zinc-800 bg-zinc-900/80 px-2 py-1.5 font-mono text-xs text-zinc-100 outline-none focus:border-orange-500/60"
+                    className="w-20 rounded-md border border-border bg-card/80 px-2 py-1.5 font-mono text-xs text-foreground outline-none focus:border-primary/60"
                   />
                   <select
+                    aria-label="Time unit"
                     value={customUnit}
                     onChange={(e) => {
                       const u = Number(e.target.value);
@@ -258,7 +299,7 @@ export default function Home() {
                         );
                       }
                     }}
-                    className="rounded-md border border-zinc-800 bg-zinc-900/80 px-2 py-1.5 font-mono text-xs text-zinc-100 outline-none"
+                    className="rounded-md border border-border bg-card/80 px-2 py-1.5 font-mono text-xs text-foreground outline-none"
                   >
                     {UNITS.map((u) => (
                       <option key={u.value} value={u.value}>
@@ -270,7 +311,7 @@ export default function Home() {
               )}
             </div>
 
-            <label className="flex cursor-pointer items-center gap-2 text-zinc-400">
+            <label className="flex cursor-pointer items-center gap-2 text-muted-foreground">
               <input
                 type="checkbox"
                 checked={once}
@@ -284,22 +325,41 @@ export default function Home() {
           <button
             onClick={burn}
             disabled={busy || !text.trim()}
-            className="w-full rounded-lg bg-orange-500 px-6 py-3 font-semibold text-zinc-950 transition hover:bg-orange-400 hover:shadow-[0_0_40px_rgba(249,115,22,0.4)] disabled:cursor-not-allowed disabled:opacity-40"
+            className={`w-full rounded-lg bg-primary px-6 py-3 font-semibold text-primary-foreground transition hover:bg-primary-soft hover:shadow-[0_0_40px_rgba(249,115,22,0.4)] disabled:cursor-not-allowed disabled:opacity-40 ${FOCUS}`}
           >
             {busy ? "Sealing…" : "Seal & burn"}
           </button>
-          {err && <p className="text-sm text-red-400">{err}</p>}
+          {err && <p className="text-sm text-destructive">{err}</p>}
+
+          <section aria-label="How it works" className="pt-8">
+            <div className="grid gap-4 sm:grid-cols-3">
+              {STEPS.map((s) => (
+                <div
+                  key={s.n}
+                  className="rounded-xl border border-border bg-card/60 p-4 backdrop-blur-sm"
+                >
+                  <p className="font-mono text-xs text-primary">{s.n}</p>
+                  <p className="mt-1.5 text-sm font-semibold text-foreground">
+                    {s.title}
+                  </p>
+                  <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                    {s.body}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </section>
         </div>
       ) : (
         <div ref={resultRef} className="space-y-5">
-          <div className="animate-ember rounded-xl border border-orange-500/50 bg-zinc-900/80 p-6 backdrop-blur-sm">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-orange-400">
+          <div className="animate-ember rounded-xl border border-primary/50 bg-card/80 p-6 backdrop-blur-sm">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-primary-soft">
               sealed — your link is forged
             </p>
-            <div className="mt-3 break-all font-mono text-sm leading-relaxed text-orange-200">
+            <div className="mt-3 break-all font-mono text-sm leading-relaxed text-primary-mute">
               <ScrambleText text={result.link} speed={18} per={4} />
             </div>
-            <p className="mt-3 text-xs text-zinc-500">
+            <p className="mt-3 text-xs text-subtle">
               The decryption key lives after the <code>#</code> — it never
               touched a server or the chain.
             </p>
@@ -311,15 +371,15 @@ export default function Home() {
               setCopied(true);
               setTimeout(() => setCopied(false), 1500);
             }}
-            className="w-full rounded-lg bg-orange-500 px-6 py-3 font-semibold text-zinc-950 transition hover:bg-orange-400"
+            className={`w-full rounded-lg bg-primary px-6 py-3 font-semibold text-primary-foreground transition hover:bg-primary-soft ${FOCUS}`}
           >
             {copied ? "Copied — send it" : "Copy link"}
           </button>
 
-          <p className="text-xs text-zinc-500">
+          <p className="text-xs text-subtle">
             Entity expires at block {result.expiresAt} ·{" "}
             <a
-              className="underline hover:text-zinc-300"
+              className={`underline transition hover:text-foreground ${FOCUS}`}
               href={`https://tiramisu.explorer.arkiv.network/tx/${result.txHash}`}
               target="_blank"
               rel="noreferrer"
@@ -332,14 +392,14 @@ export default function Home() {
               setResult(null);
               setText("");
             }}
-            className="text-sm text-zinc-500 underline hover:text-zinc-300"
+            className={`rounded text-sm text-subtle underline transition hover:text-foreground ${FOCUS}`}
           >
             write another
           </button>
         </div>
       )}
 
-      <footer className="mt-auto pt-16 text-xs text-zinc-600">
+      <footer className="mt-auto pt-16 text-xs text-subtle">
         Ciphertext lives on the Tiramisu testnet as a public, encrypted Arkiv
         entity. The decryption key exists only in the link fragment. When the
         entity dies — by reading or by Entity Expiration — nothing readable is

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useReducedMotion } from "@/lib/use-reduced-motion";
 
 const CHARS = "!<>-_\\/[]{}=+*^?#abcdefxyz0123456789";
 
@@ -19,7 +20,13 @@ export default function ScrambleText({
   onDone?: () => void;
 }) {
   const [out, setOut] = useState("");
+  const reduced = useReducedMotion();
+
   useEffect(() => {
+    if (reduced) {
+      onDone?.();
+      return;
+    }
     let revealed = 0;
     const id = setInterval(() => {
       revealed += per;
@@ -37,6 +44,7 @@ export default function ScrambleText({
     }, speed);
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [text, speed, per]);
-  return <span className={className}>{out}</span>;
+  }, [text, speed, per, reduced]);
+
+  return <span className={className}>{reduced ? text : out}</span>;
 }

@@ -7,11 +7,16 @@ import EmberField from "@/components/EmberField";
 import ScrambleText from "@/components/ScrambleText";
 import { arkivPublic } from "@/lib/arkiv-public";
 import { decryptNote } from "@/lib/note-crypto";
+import { useReducedMotion } from "@/lib/use-reduced-motion";
+import { EMBER_SOFT } from "@/lib/tokens";
 
 type Phase = "loading" | "no-key" | "gone" | "reading" | "burning" | "dead";
 
 const EXPLORER = "https://tiramisu.explorer.arkiv.network";
 const READ_SECONDS = 4.5; // how long the note stays readable before igniting
+
+const FOCUS =
+  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70";
 
 export default function NoteClient({ noteKey }: { noteKey: string }) {
   const [phase, setPhase] = useState<Phase>("loading");
@@ -27,6 +32,7 @@ export default function NoteClient({ noteKey }: { noteKey: string }) {
   const [secsLeft, setSecsLeft] = useState<number | null>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const burnedBurstDone = useRef(false);
+  const reduced = useReducedMotion();
 
   useEffect(() => {
     let cancelled = false;
@@ -100,6 +106,10 @@ export default function NoteClient({ noteKey }: { noteKey: string }) {
   useEffect(() => {
     if (!revealed || !note?.once) return;
     const t = setTimeout(() => {
+      if (reduced) {
+        setPhase("dead");
+        return;
+      }
       setIgnite(true);
       setPhase("burning");
       window.dispatchEvent(new Event("burnlink:burst"));
@@ -111,7 +121,7 @@ export default function NoteClient({ noteKey }: { noteKey: string }) {
           });
           tl.to(
             words,
-            { color: "#fb923c", duration: 0.25, stagger: 0.004 },
+            { color: EMBER_SOFT, duration: 0.25, stagger: 0.004 },
             0
           ).to(
             words,
@@ -137,7 +147,7 @@ export default function NoteClient({ noteKey }: { noteKey: string }) {
       );
     }, READ_SECONDS * 1000);
     return () => clearTimeout(t);
-  }, [revealed, note]);
+  }, [revealed, note, reduced]);
 
   // timed notes: tick down to $expiresAt, then the entity is gone
   useEffect(() => {
@@ -160,22 +170,37 @@ export default function NoteClient({ noteKey }: { noteKey: string }) {
     }
   }, [phase]);
 
+  const liveText =
+    phase === "loading"
+      ? "Fetching the note from Arkiv."
+      : phase === "no-key"
+        ? "This link is missing its decryption key."
+        : phase === "gone" || phase === "dead"
+          ? "This note is gone."
+          : phase === "burning"
+            ? "The note is burning."
+            : "The note is readable.";
+
   return (
     <main className="relative z-10 mx-auto flex min-h-dvh max-w-2xl flex-col px-6 py-16">
       <EmberField />
 
       <header className="mb-10">
         <h1 className="text-3xl font-bold tracking-tight">
-          Burn<span className="text-orange-500">Link</span>
+          Burn<span className="text-primary">Link</span>
         </h1>
       </header>
 
+      <div aria-live="polite" className="sr-only">
+        {liveText}
+      </div>
+
       {phase === "loading" && (
         <div className="space-y-3">
-          <p className="animate-ember inline-block rounded-lg border border-orange-500/40 bg-zinc-900/80 px-5 py-3 text-orange-200">
+          <p className="animate-ember inline-block rounded-lg border border-primary/40 bg-card/80 px-5 py-3 text-primary-mute">
             Breaking the seal…
           </p>
-          <p className="text-xs text-zinc-500">
+          <p className="text-xs text-subtle">
             Fetching ciphertext straight from the chain — no login, no
             permission.
           </p>
@@ -185,7 +210,7 @@ export default function NoteClient({ noteKey }: { noteKey: string }) {
       {phase === "no-key" && (
         <div className="space-y-3">
           <p className="text-xl font-semibold">No key in this link.</p>
-          <p className="text-zinc-400">
+          <p className="text-muted-foreground">
             BurnLink keys live after the <code>#</code>. Whoever shared this
             sent an incomplete link.
           </p>
@@ -194,21 +219,21 @@ export default function NoteClient({ noteKey }: { noteKey: string }) {
 
       {(phase === "gone" || phase === "dead") && (
         <div className="space-y-4">
-          <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-6 backdrop-blur-sm">
-            <p className="text-xl font-semibold text-orange-400">
+          <div className="rounded-xl border border-border bg-card/60 p-6 backdrop-blur-sm">
+            <p className="text-xl font-semibold text-primary-soft">
               This note is gone.
             </p>
-            <p className="mt-2 text-zinc-400">
+            <p className="mt-2 text-muted-foreground">
               Burned after reading or expired by Entity Expiration — deleted by
               the Arkiv protocol, not by someone&apos;s promise. Nothing
               decryptable remains anywhere.
             </p>
           </div>
           {burnTx ? (
-            <p className="text-xs text-zinc-500">
+            <p className="text-xs text-subtle">
               Deletion tx:{" "}
               <a
-                className="font-mono underline hover:text-zinc-300"
+                className={`font-mono underline transition hover:text-foreground ${FOCUS}`}
                 href={`${EXPLORER}/tx/${burnTx}`}
                 target="_blank"
                 rel="noreferrer"
@@ -217,7 +242,7 @@ export default function NoteClient({ noteKey }: { noteKey: string }) {
               </a>
             </p>
           ) : phase === "dead" ? (
-            <p className="text-xs text-zinc-600">
+            <p className="text-xs text-subtle">
               Confirming deletion on-chain…
             </p>
           ) : null}
@@ -228,12 +253,12 @@ export default function NoteClient({ noteKey }: { noteKey: string }) {
         <div className="space-y-6">
           {note.once && revealed && (
             <div className="space-y-2">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-orange-400">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-primary-soft">
                 {ignite ? "burning" : "this note burns after you read it"}
               </p>
-              <div className="h-0.5 overflow-hidden rounded-full bg-zinc-800">
+              <div className="h-0.5 overflow-hidden rounded-full bg-border">
                 {!ignite && (
-                  <div className="animate-burnbar h-full bg-gradient-to-r from-orange-500 to-red-600" />
+                  <div className="animate-burnbar h-full bg-gradient-to-r from-primary to-ember" />
                 )}
               </div>
             </div>
@@ -241,10 +266,10 @@ export default function NoteClient({ noteKey }: { noteKey: string }) {
 
           <div
             ref={cardRef}
-            className="relative rounded-lg border border-zinc-800 bg-zinc-900/80 p-5 backdrop-blur-sm"
+            className="relative rounded-lg border border-border bg-card/80 p-5 backdrop-blur-sm"
           >
             {ignite ? (
-              <div className="pointer-events-none font-mono text-sm text-zinc-100">
+              <div className="pointer-events-none font-mono text-sm text-foreground">
                 {note.text
                   .split(/\s+/)
                   .slice(0, 200)
@@ -255,7 +280,7 @@ export default function NoteClient({ noteKey }: { noteKey: string }) {
                   ))}
               </div>
             ) : (
-              <div className="whitespace-pre-wrap font-mono text-sm text-zinc-100">
+              <div className="whitespace-pre-wrap font-mono text-sm text-foreground">
                 {revealed ? (
                   note.text
                 ) : (
@@ -272,11 +297,11 @@ export default function NoteClient({ noteKey }: { noteKey: string }) {
 
           {!note.once && (
             <div className="space-y-2">
-              <p className="text-sm text-zinc-400">
+              <p className="text-sm text-muted-foreground">
                 {secsLeft !== null ? (
                   <>
                     This note self-destructs in{" "}
-                    <span className="font-mono text-orange-400">
+                    <span className="font-mono text-primary-soft">
                       {secsLeft}s
                     </span>{" "}
                     — Entity Expiration, enforced by the protocol.
@@ -286,9 +311,9 @@ export default function NoteClient({ noteKey }: { noteKey: string }) {
                 )}
               </p>
               {secsLeft !== null && (
-                <div className="h-0.5 overflow-hidden rounded-full bg-zinc-800">
+                <div className="h-0.5 overflow-hidden rounded-full bg-border">
                   <div
-                    className="h-full bg-gradient-to-r from-orange-500 to-red-600 transition-all duration-1000 ease-linear"
+                    className="h-full bg-gradient-to-r from-primary to-ember transition-all duration-1000 ease-linear"
                     style={{
                       width: `${Math.min(100, (secsLeft / 30) * 100)}%`,
                     }}
@@ -298,8 +323,8 @@ export default function NoteClient({ noteKey }: { noteKey: string }) {
             </div>
           )}
 
-          <details className="text-xs text-zinc-500">
-            <summary className="cursor-pointer hover:text-zinc-300">
+          <details className="text-xs text-subtle">
+            <summary className={`cursor-pointer rounded transition hover:text-foreground ${FOCUS}`}>
               on-chain proof
             </summary>
             <ul className="mt-2 space-y-1 break-all font-mono">
@@ -310,7 +335,7 @@ export default function NoteClient({ noteKey }: { noteKey: string }) {
               )}
               <li>
                 <a
-                  className="underline hover:text-zinc-300"
+                  className={`underline transition hover:text-foreground ${FOCUS}`}
                   href={`${EXPLORER}/address/${note.creator}`}
                   target="_blank"
                   rel="noreferrer"
@@ -323,8 +348,8 @@ export default function NoteClient({ noteKey }: { noteKey: string }) {
         </div>
       )}
 
-      <footer className="mt-auto pt-16 text-xs text-zinc-600">
-        <Link href="/" className="underline hover:text-zinc-400">
+      <footer className="mt-auto pt-16 text-xs text-subtle">
+        <Link href="/" className={`rounded underline transition hover:text-foreground ${FOCUS}`}>
           BurnLink
         </Link>{" "}
         — notes that provably die on Arkiv.

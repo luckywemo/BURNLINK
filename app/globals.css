@@ -1,30 +1,46 @@
 @import "tailwindcss";
 
+/* ── Tokens (DESIGN.md §2) — forced dark theme, one accent ─────────── */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  color-scheme: dark;
+
+  --background: #09090b;          /* page base */
+  --foreground: #f4f4f5;          /* body text */
+  --card: #18181b;                /* elevated surfaces */
+  --border: #27272a;              /* hairlines */
+  --muted-foreground: #a1a1aa;    /* secondary text */
+  --subtle: #71717a;              /* captions / placeholders */
+  --primary: #f97316;             /* the one accent — ember */
+  --primary-soft: #fb923c;
+  --primary-mute: #fed7aa;
+  --primary-foreground: #09090b;
+  --ember: #dc2626;               /* gradient tail for burn bars */
+  --destructive: #f87171;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --color-card: var(--card);
+  --color-border: var(--border);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-subtle: var(--subtle);
+  --color-primary: var(--primary);
+  --color-primary-soft: var(--primary-soft);
+  --color-primary-mute: var(--primary-mute);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-ember: var(--ember);
+  --color-destructive: var(--destructive);
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
 }
 
+/* ── Signature CSS motion ──────────────────────────────────────────── */
 @keyframes emberPulse {
   0%, 100% { box-shadow: 0 0 24px rgba(249,115,22,0.18), inset 0 0 24px rgba(249,115,22,0.05); }
   50% { box-shadow: 0 0 70px rgba(249,115,22,0.4), inset 0 0 40px rgba(249,115,22,0.12); }
@@ -36,3 +52,10 @@ body {
   to { width: 0%; }
 }
 .animate-burnbar { animation: burnBar 4.5s linear forwards; }
+
+/* ── prefers-reduced-motion: kill ambient + signature motion ──────── */
+@media (prefers-reduced-motion: reduce) {
+  .fire-bg { display: none; }
+  .animate-ember, .animate-burnbar { animation: none; }
+  .animate-burnbar { width: 0; }
+}
