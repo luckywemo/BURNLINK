@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import localFont from "next/font/local";
+import FireBg from "@/components/FireBg";
 import "./globals.css";
 
 const geistSans = localFont({
@@ -33,15 +34,7 @@ export default function RootLayout({
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable}`}>
       <body className="bg-background font-sans text-foreground antialiased">
         <div className="pointer-events-none fixed inset-0 z-0 overflow-hidden">
-          <video
-            className="fire-bg h-full w-full object-cover opacity-40"
-            src="/fire-bg.mp4"
-            autoPlay
-            muted
-            loop
-            playsInline
-            aria-hidden
-          />
+          <FireBg />
           <div className="absolute inset-0 bg-gradient-to-b from-background/60 via-background/75 to-background/90" />
           <div className="ember-glow absolute inset-0" />
           <div className="dot-grid absolute inset-0" />

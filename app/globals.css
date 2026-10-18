@@ -144,7 +144,6 @@ body {
 
 /* ── prefers-reduced-motion: kill ambient + signature motion ──────── */
 @media (prefers-reduced-motion: reduce) {
-  .fire-bg { display: none; }
   .animate-ember, .animate-burnbar, .animate-flicker, .animate-rise,
   .beam::before { animation: none; }
   .animate-burnbar { width: 0; }
