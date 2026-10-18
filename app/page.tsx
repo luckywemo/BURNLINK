@@ -193,7 +193,7 @@ export default function Home() {
       </div>
 
       {!result ? (
-        <div className="space-y-5">
+        <div key="compose" className="space-y-5">
           <div ref={composerRef} className="relative rounded-lg">
             <label htmlFor="note" className="sr-only">
               Note text
@@ -343,7 +343,7 @@ export default function Home() {
           </section>
         </div>
       ) : (
-        <div ref={resultRef} className="animate-rise space-y-5">
+        <div key="result" ref={resultRef} className="animate-rise space-y-5">
           <div className="animate-ember rounded-xl border border-primary/50 bg-card/80 p-6 backdrop-blur-sm">
             <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-primary-soft">
               sealed — your link is forged
