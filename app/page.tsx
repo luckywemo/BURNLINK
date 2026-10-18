@@ -78,16 +78,7 @@ export default function Home() {
     });
   }, [reduced]);
 
-  useEffect(() => {
-    if (reduced || !result || !resultRef.current) return;
-    gsap.from(resultRef.current.children, {
-      y: 22,
-      opacity: 0,
-      duration: 0.55,
-      stagger: 0.08,
-      ease: "power3.out",
-    });
-  }, [result, reduced]);
+
 
   function playBurnAnimation(): Promise<void> {
     if (reduced) return Promise.resolve();
@@ -352,7 +343,7 @@ export default function Home() {
           </section>
         </div>
       ) : (
-        <div ref={resultRef} className="space-y-5">
+        <div ref={resultRef} className="animate-rise space-y-5">
           <div className="animate-ember rounded-xl border border-primary/50 bg-card/80 p-6 backdrop-blur-sm">
             <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-primary-soft">
               sealed — your link is forged

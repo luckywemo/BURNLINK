@@ -76,10 +76,18 @@ body {
 }
 .animate-fadeburn { animation: fadeOut 0.4s ease-out forwards; }
 
+/* Result entrance — CSS so it can never freeze mid-tween (content must
+   never depend on JS animation completing) */
+@keyframes riseIn {
+  from { opacity: 0; transform: translateY(18px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-rise { animation: riseIn 0.55s cubic-bezier(0.22, 0.61, 0.36, 1) both; }
+
 /* ── prefers-reduced-motion: kill ambient + signature motion ──────── */
 @media (prefers-reduced-motion: reduce) {
   .fire-bg { display: none; }
-  .animate-ember, .animate-burnbar, .animate-flicker { animation: none; }
+  .animate-ember, .animate-burnbar, .animate-flicker, .animate-rise { animation: none; }
   .animate-burnbar { width: 0; }
   .animate-flicker { color: #f97316; }
 }
