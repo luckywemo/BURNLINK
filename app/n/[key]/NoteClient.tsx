@@ -2,7 +2,9 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import gsap from "gsap";
+import { gsap, useGSAP } from "@/lib/gsap";
+import { Card } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import EmberField from "@/components/EmberField";
 import ScrambleText from "@/components/ScrambleText";
 import { arkivPublic } from "@/lib/arkiv-public";
@@ -33,6 +35,7 @@ export default function NoteClient({ noteKey }: { noteKey: string }) {
   const cardRef = useRef<HTMLDivElement>(null);
   const burnedBurstDone = useRef(false);
   const reduced = useReducedMotion();
+  const { contextSafe } = useGSAP();
 
   useEffect(() => {
     let cancelled = false;
@@ -105,52 +108,55 @@ export default function NoteClient({ noteKey }: { noteKey: string }) {
   // after the scramble reveal, once-notes count down then ignite
   useEffect(() => {
     if (!revealed || !note?.once) return;
-    const t = setTimeout(() => {
-      if (reduced) {
-        // reduced-motion: brief fade instead of the full scatter
+    const t = setTimeout(
+      contextSafe(() => {
+        if (reduced) {
+          // reduced-motion: brief fade instead of the full scatter
+          setIgnite(true);
+          setPhase("burning");
+          setTimeout(() => setPhase("dead"), 450);
+          return;
+        }
         setIgnite(true);
         setPhase("burning");
-        setTimeout(() => setPhase("dead"), 450);
-        return;
-      }
-      setIgnite(true);
-      setPhase("burning");
-      window.dispatchEvent(new Event("burnlink:burst"));
-      requestAnimationFrame(() =>
-        requestAnimationFrame(() => {
-          const words = gsap.utils.toArray<HTMLElement>(".burn-word");
-          const tl = gsap.timeline({
-            onComplete: () => setPhase("dead"),
-          });
-          tl.to(
-            words,
-            { color: EMBER_SOFT, duration: 0.25, stagger: 0.004 },
-            0
-          ).to(
-            words,
-            {
-              y: () => -(70 + Math.random() * 180),
-              x: () => (Math.random() - 0.5) * 140,
-              opacity: 0,
-              filter: "blur(6px)",
-              duration: 1.0,
-              ease: "power2.in",
-              stagger: { each: 0.006, from: "random" },
-            },
-            0.25
-          );
-          if (cardRef.current) {
+        window.dispatchEvent(new Event("burnlink:burst"));
+        requestAnimationFrame(() =>
+          requestAnimationFrame(() => {
+            const words = gsap.utils.toArray<HTMLElement>(".burn-word");
+            const tl = gsap.timeline({
+              onComplete: () => setPhase("dead"),
+            });
             tl.to(
-              cardRef.current,
-              { opacity: 0, scale: 0.97, duration: 0.4 },
-              1.1
+              words,
+              { color: EMBER_SOFT, duration: 0.25, stagger: 0.004 },
+              0
+            ).to(
+              words,
+              {
+                y: () => -(70 + Math.random() * 180),
+                x: () => (Math.random() - 0.5) * 140,
+                opacity: 0,
+                filter: "blur(6px)",
+                duration: 1.0,
+                ease: "power2.in",
+                stagger: { each: 0.006, from: "random" },
+              },
+              0.25
             );
-          }
-        })
-      );
-    }, READ_SECONDS * 1000);
+            if (cardRef.current) {
+              tl.to(
+                cardRef.current,
+                { opacity: 0, scale: 0.97, duration: 0.4 },
+                1.1
+              );
+            }
+          })
+        );
+      }),
+      READ_SECONDS * 1000
+    );
     return () => clearTimeout(t);
-  }, [revealed, note, reduced]);
+  }, [revealed, note, reduced, contextSafe]);
 
   // timed notes: tick down to $expiresAt, then the entity is gone
   useEffect(() => {
@@ -204,6 +210,11 @@ export default function NoteClient({ noteKey }: { noteKey: string }) {
           <p className="animate-ember inline-block rounded-lg border border-primary/40 bg-card/80 px-5 py-3 text-primary-mute">
             Breaking the seal…
           </p>
+          <div className="space-y-2 pt-2" aria-hidden>
+            <Skeleton className="h-4 w-3/4" />
+            <Skeleton className="h-4 w-1/2" />
+            <Skeleton className="h-4 w-2/3" />
+          </div>
           <p className="text-xs text-subtle">
             Fetching ciphertext straight from the chain — no login, no
             permission.
@@ -223,7 +234,7 @@ export default function NoteClient({ noteKey }: { noteKey: string }) {
 
       {(phase === "gone" || phase === "dead") && (
         <div className="space-y-4">
-          <div className="rounded-xl border border-border bg-card/60 p-6 backdrop-blur-sm">
+          <Card className="bg-card/60 p-6">
             <p className="text-xl font-semibold text-primary-soft">
               This note is gone.
             </p>
@@ -232,7 +243,7 @@ export default function NoteClient({ noteKey }: { noteKey: string }) {
               the Arkiv protocol, not by someone&apos;s promise. Nothing
               decryptable remains anywhere.
             </p>
-          </div>
+          </Card>
           {burnTx ? (
             <p className="text-xs text-subtle">
               Deletion tx:{" "}
@@ -268,11 +279,9 @@ export default function NoteClient({ noteKey }: { noteKey: string }) {
             </div>
           )}
 
-          <div
+          <Card
             ref={cardRef}
-            className={`relative rounded-lg border border-border bg-card/80 p-5 backdrop-blur-sm ${
-              ignite && reduced ? "animate-fadeburn" : ""
-            }`}
+            className={`relative p-5 ${ignite && reduced ? "animate-fadeburn" : ""}`}
           >
             {ignite ? (
               <div className="pointer-events-none font-mono text-sm text-foreground">
@@ -299,7 +308,7 @@ export default function NoteClient({ noteKey }: { noteKey: string }) {
                 )}
               </div>
             )}
-          </div>
+          </Card>
 
           {!note.once && (
             <div className="space-y-2">

@@ -1,8 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import gsap from "gsap";
+import { useRef, useState } from "react";
+import { gsap, useGSAP } from "@/lib/gsap";
 import { Flame, Copy, Check } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import EmberField from "@/components/EmberField";
 import ScrambleText from "@/components/ScrambleText";
 import { encryptNote, randomUrlToken, sha256b64 } from "@/lib/note-crypto";
@@ -67,27 +70,30 @@ export default function Home() {
   const resultRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
   const reduced = useReducedMotion();
+  const { contextSafe } = useGSAP({ scope: headerRef });
 
-  useEffect(() => {
-    if (reduced || !headerRef.current) return;
-    gsap.from(headerRef.current.children, {
-      y: 26,
-      opacity: 0,
-      duration: 0.9,
-      stagger: 0.14,
-      ease: "power3.out",
-    });
-  }, [reduced]);
-
-
+  useGSAP(
+    () => {
+      if (reduced || !headerRef.current) return;
+      gsap.from(headerRef.current.children, {
+        y: 26,
+        opacity: 0,
+        duration: 0.9,
+        stagger: 0.14,
+        ease: "power3.out",
+      });
+    },
+    { scope: headerRef, dependencies: [reduced] },
+  );
 
   function playBurnAnimation(): Promise<void> {
     if (reduced) return Promise.resolve();
     return new Promise((resolve) => {
       setBurning(true);
       window.dispatchEvent(new Event("burnlink:burst"));
-      requestAnimationFrame(() =>
-        requestAnimationFrame(() => {
+      contextSafe(() =>
+        requestAnimationFrame(() =>
+          requestAnimationFrame(() => {
           const words = gsap.utils.toArray<HTMLElement>(".burn-word");
           const composer = composerRef.current;
           const tl = gsap.timeline({ onComplete: resolve });
@@ -127,8 +133,9 @@ export default function Home() {
               1.15
             );
           }
-        })
-      );
+          })
+        )
+      )();
       setTimeout(resolve, 2200); // hard cap — never hang the UX
     });
   }
@@ -263,7 +270,7 @@ export default function Home() {
               </div>
               {custom && (
                 <span className="flex items-center gap-1.5">
-                  <input
+                  <Input
                     type="number"
                     min={1}
                     aria-label="Custom duration"
@@ -280,7 +287,7 @@ export default function Home() {
                         );
                       }
                     }}
-                    className="w-20 rounded-md border border-border bg-card/80 px-2 py-1.5 font-mono text-xs text-foreground outline-none focus:border-primary/60"
+                    className="w-20 px-2 py-1.5 text-xs"
                   />
                   <select
                     aria-label="Time unit"
@@ -321,22 +328,23 @@ export default function Home() {
             </label>
           </div>
 
-          <button
+          <Button
             onClick={burn}
             disabled={busy || !text.trim()}
-            className={`flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-6 py-3 font-semibold text-primary-foreground transition hover:bg-primary-soft hover:shadow-[0_0_40px_rgba(249,115,22,0.4)] disabled:cursor-not-allowed disabled:opacity-40 ${FOCUS}`}
+            size="lg"
+            className="w-full"
           >
             <Flame size={18} aria-hidden />
             {busy ? "Sealing…" : "Seal & burn"}
-          </button>
+          </Button>
           {err && <p className="text-sm text-destructive">{err}</p>}
 
           <section aria-label="How it works" className="pt-8">
             <div className="grid gap-4 sm:grid-cols-3">
               {STEPS.map((s) => (
-                <div
+                <Card
                   key={s.n}
-                  className="rounded-xl border border-border bg-card/60 p-4 backdrop-blur-sm transition hover:border-primary/40"
+                  className="bg-card/60 p-4 transition hover:border-primary/40"
                 >
                   <p className="font-mono text-xs text-primary">{s.n}</p>
                   <p className="mt-1.5 text-sm font-semibold text-foreground">
@@ -345,14 +353,14 @@ export default function Home() {
                   <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
                     {s.body}
                   </p>
-                </div>
+                </Card>
               ))}
             </div>
           </section>
         </div>
       ) : (
         <div key="result" ref={resultRef} className="animate-rise space-y-5">
-          <div className="animate-ember rounded-xl border border-primary/50 bg-card/80 p-6 backdrop-blur-sm">
+          <Card className="animate-ember border-primary/50 p-6">
             <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-primary-soft">
               sealed — your link is forged
             </p>
@@ -363,19 +371,19 @@ export default function Home() {
               The decryption key lives after the <code>#</code> — it never
               touched a server or the chain.
             </p>
-          </div>
+          </Card>
 
-          <button
+          <Button
             onClick={() => {
               navigator.clipboard.writeText(result.link);
               setCopied(true);
               setTimeout(() => setCopied(false), 1500);
             }}
-            className={`flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-6 py-3 font-semibold text-primary-foreground transition hover:bg-primary-soft ${FOCUS}`}
+            className="w-full"
           >
             {copied ? <Check size={18} aria-hidden /> : <Copy size={18} aria-hidden />}
             {copied ? "Copied — send it" : "Copy link"}
-          </button>
+          </Button>
 
           <p className="text-xs text-subtle">
             Entity expires at block {result.expiresAt} ·{" "}
@@ -388,15 +396,16 @@ export default function Home() {
               creation tx on the explorer
             </a>
           </p>
-          <button
+          <Button
+            variant="link"
+            className="h-auto p-0"
             onClick={() => {
               setResult(null);
               setText("");
             }}
-            className={`rounded text-sm text-subtle underline transition hover:text-foreground ${FOCUS}`}
           >
             write another
-          </button>
+          </Button>
         </div>
       )}
 
