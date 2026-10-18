@@ -186,7 +186,8 @@ export default function Home() {
 
       <header ref={headerRef} className="mb-10">
         <h1 className="text-4xl font-bold tracking-tight">
-          Burn<span className="text-primary">Link</span>
+          <span className="animate-flicker">Burn</span>
+          <span className="text-primary">Link</span>
         </h1>
         <p className="mt-3 text-muted-foreground">
           A note that provably dies. Encrypted in your browser, stored as an

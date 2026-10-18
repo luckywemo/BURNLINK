@@ -53,9 +53,33 @@ body {
 }
 .animate-burnbar { animation: burnBar 4.5s linear forwards; }
 
+/* Wordmark ember-flicker — the always-on signature */
+@keyframes emberFlicker {
+  0%, 100% {
+    text-shadow: 0 0 18px rgba(249,115,22,0.55), 0 0 60px rgba(220,38,38,0.25);
+    color: #f97316;
+  }
+  40% {
+    text-shadow: 0 0 26px rgba(251,146,60,0.8), 0 0 90px rgba(249,115,22,0.4);
+    color: #fb923c;
+  }
+  70% {
+    text-shadow: 0 0 14px rgba(249,115,22,0.4), 0 0 50px rgba(220,38,38,0.18);
+    color: #ea580c;
+  }
+}
+.animate-flicker { animation: emberFlicker 3.2s ease-in-out infinite; }
+
+/* Reduced-motion burn: brief opacity fade instead of full scatter */
+@keyframes fadeOut {
+  to { opacity: 0; transform: translateY(-8px); }
+}
+.animate-fadeburn { animation: fadeOut 0.4s ease-out forwards; }
+
 /* ── prefers-reduced-motion: kill ambient + signature motion ──────── */
 @media (prefers-reduced-motion: reduce) {
   .fire-bg { display: none; }
-  .animate-ember, .animate-burnbar { animation: none; }
+  .animate-ember, .animate-burnbar, .animate-flicker { animation: none; }
   .animate-burnbar { width: 0; }
+  .animate-flicker { color: #f97316; }
 }

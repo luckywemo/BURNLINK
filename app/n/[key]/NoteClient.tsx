@@ -107,7 +107,10 @@ export default function NoteClient({ noteKey }: { noteKey: string }) {
     if (!revealed || !note?.once) return;
     const t = setTimeout(() => {
       if (reduced) {
-        setPhase("dead");
+        // reduced-motion: brief fade instead of the full scatter
+        setIgnite(true);
+        setPhase("burning");
+        setTimeout(() => setPhase("dead"), 450);
         return;
       }
       setIgnite(true);
@@ -187,7 +190,8 @@ export default function NoteClient({ noteKey }: { noteKey: string }) {
 
       <header className="mb-10">
         <h1 className="text-3xl font-bold tracking-tight">
-          Burn<span className="text-primary">Link</span>
+          <span className="animate-flicker">Burn</span>
+          <span className="text-primary">Link</span>
         </h1>
       </header>
 
@@ -266,7 +270,9 @@ export default function NoteClient({ noteKey }: { noteKey: string }) {
 
           <div
             ref={cardRef}
-            className="relative rounded-lg border border-border bg-card/80 p-5 backdrop-blur-sm"
+            className={`relative rounded-lg border border-border bg-card/80 p-5 backdrop-blur-sm ${
+              ignite && reduced ? "animate-fadeburn" : ""
+            }`}
           >
             {ignite ? (
               <div className="pointer-events-none font-mono text-sm text-foreground">
