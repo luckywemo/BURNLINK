@@ -176,13 +176,19 @@ export default function Home() {
       <EmberField />
 
       <header ref={headerRef} className="mb-10">
-        <h1 className="text-4xl font-bold tracking-tight">
+        <p className="text-sm font-semibold uppercase tracking-[0.3em] text-primary">
           <span className="animate-flicker">Burn</span>
           <span className="text-primary">Link</span>
+        </p>
+        <h1 className="mt-4 text-5xl font-bold leading-[1.05] tracking-tight sm:text-6xl">
+          A note that{" "}
+          <span className="bg-gradient-to-r from-primary-soft via-primary to-ember bg-clip-text text-transparent">
+            provably dies.
+          </span>
         </h1>
-        <p className="mt-3 text-muted-foreground">
-          A note that provably dies. Encrypted in your browser, stored as an
-          Arkiv entity, deleted by the protocol — not by a promise.
+        <p className="mt-4 max-w-lg text-muted-foreground">
+          Encrypted in your browser, stored as an Arkiv entity, deleted by the
+          protocol — not by a promise.
         </p>
       </header>
 
@@ -194,7 +200,7 @@ export default function Home() {
 
       {!result ? (
         <div key="compose" className="space-y-5">
-          <div ref={composerRef} className="relative rounded-lg">
+          <div ref={composerRef} className="beam relative rounded-lg">
             <label htmlFor="note" className="sr-only">
               Note text
             </label>
@@ -328,7 +334,7 @@ export default function Home() {
               {STEPS.map((s) => (
                 <div
                   key={s.n}
-                  className="rounded-xl border border-border bg-card/60 p-4 backdrop-blur-sm"
+                  className="rounded-xl border border-border bg-card/60 p-4 backdrop-blur-sm transition hover:border-primary/40"
                 >
                   <p className="font-mono text-xs text-primary">{s.n}</p>
                   <p className="mt-1.5 text-sm font-semibold text-foreground">

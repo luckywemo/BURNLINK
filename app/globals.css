@@ -84,10 +84,69 @@ body {
 }
 .animate-rise { animation: riseIn 0.55s cubic-bezier(0.22, 0.61, 0.36, 1) both; }
 
+/* ── Atmosphere layers (DESIGN.md §7 hero treatment) ──────────────── */
+.ember-glow {
+  background: radial-gradient(
+    ellipse 60% 45% at 50% 34%,
+    rgba(249, 115, 22, 0.16),
+    rgba(220, 38, 38, 0.05) 45%,
+    transparent 72%
+  );
+}
+.dot-grid {
+  background-image: radial-gradient(
+    rgba(244, 244, 245, 0.055) 1px,
+    transparent 1px
+  );
+  background-size: 22px 22px;
+  mask-image: radial-gradient(
+    ellipse 85% 65% at 50% 28%,
+    black 25%,
+    transparent 75%
+  );
+}
+
+/* Rotating beam border — a light running the card's edge */
+@property --beam-a {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+.beam {
+  position: relative;
+}
+.beam::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1.5px;
+  background: conic-gradient(
+    from var(--beam-a),
+    transparent 0 72%,
+    rgba(249, 115, 22, 0.9) 84%,
+    rgba(251, 146, 60, 1) 89%,
+    transparent 97%
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: beamSpin 6s linear infinite;
+  pointer-events: none;
+}
+@keyframes beamSpin {
+  to {
+    --beam-a: 360deg;
+  }
+}
+
 /* ── prefers-reduced-motion: kill ambient + signature motion ──────── */
 @media (prefers-reduced-motion: reduce) {
   .fire-bg { display: none; }
-  .animate-ember, .animate-burnbar, .animate-flicker, .animate-rise { animation: none; }
+  .animate-ember, .animate-burnbar, .animate-flicker, .animate-rise,
+  .beam::before { animation: none; }
   .animate-burnbar { width: 0; }
   .animate-flicker { color: #f97316; }
 }

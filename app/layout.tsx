@@ -43,6 +43,8 @@ export default function RootLayout({
             aria-hidden
           />
           <div className="absolute inset-0 bg-gradient-to-b from-background/60 via-background/75 to-background/90" />
+          <div className="ember-glow absolute inset-0" />
+          <div className="dot-grid absolute inset-0" />
         </div>
         <div className="relative z-10">{children}</div>
       </body>
