@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import gsap from "gsap";
+import { Flame, Copy, Check } from "lucide-react";
 import EmberField from "@/components/EmberField";
 import ScrambleText from "@/components/ScrambleText";
 import { encryptNote, randomUrlToken, sha256b64 } from "@/lib/note-crypto";
@@ -165,7 +166,7 @@ export default function Home() {
   }
 
   const segmentCls = (active: boolean) =>
-    `px-2.5 py-1.5 font-mono text-xs transition sm:px-3 ${FOCUS} ${
+    `flex h-11 items-center px-3 font-mono text-xs transition ${FOCUS} ${
       active
         ? "bg-primary text-primary-foreground shadow-[0_0_16px_rgba(249,115,22,0.45)]"
         : "text-muted-foreground hover:bg-border hover:text-foreground"
@@ -176,9 +177,9 @@ export default function Home() {
       <EmberField />
 
       <header ref={headerRef} className="mb-10">
-        <p className="text-sm font-semibold uppercase tracking-[0.3em] text-primary">
-          <span className="animate-flicker">Burn</span>
-          <span className="text-primary">Link</span>
+        <p className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.3em] text-primary">
+          <Flame size={16} aria-hidden className="animate-flicker" />
+          BurnLink
         </p>
         <h1 className="mt-4 text-5xl font-bold leading-[1.05] tracking-tight sm:text-6xl">
           A note that{" "}
@@ -323,8 +324,9 @@ export default function Home() {
           <button
             onClick={burn}
             disabled={busy || !text.trim()}
-            className={`w-full rounded-lg bg-primary px-6 py-3 font-semibold text-primary-foreground transition hover:bg-primary-soft hover:shadow-[0_0_40px_rgba(249,115,22,0.4)] disabled:cursor-not-allowed disabled:opacity-40 ${FOCUS}`}
+            className={`flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-6 py-3 font-semibold text-primary-foreground transition hover:bg-primary-soft hover:shadow-[0_0_40px_rgba(249,115,22,0.4)] disabled:cursor-not-allowed disabled:opacity-40 ${FOCUS}`}
           >
+            <Flame size={18} aria-hidden />
             {busy ? "Sealing…" : "Seal & burn"}
           </button>
           {err && <p className="text-sm text-destructive">{err}</p>}
@@ -369,8 +371,9 @@ export default function Home() {
               setCopied(true);
               setTimeout(() => setCopied(false), 1500);
             }}
-            className={`w-full rounded-lg bg-primary px-6 py-3 font-semibold text-primary-foreground transition hover:bg-primary-soft ${FOCUS}`}
+            className={`flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-6 py-3 font-semibold text-primary-foreground transition hover:bg-primary-soft ${FOCUS}`}
           >
+            {copied ? <Check size={18} aria-hidden /> : <Copy size={18} aria-hidden />}
             {copied ? "Copied — send it" : "Copy link"}
           </button>
 
@@ -398,10 +401,29 @@ export default function Home() {
       )}
 
       <footer className="mt-auto pt-16 text-xs text-subtle">
-        Ciphertext lives on the Tiramisu testnet as a public, encrypted Arkiv
-        entity. The decryption key exists only in the link fragment. When the
-        entity dies — by reading or by Entity Expiration — nothing readable is
-        left anywhere.
+        <p>
+          Ciphertext lives on the Tiramisu testnet as a public, encrypted Arkiv
+          entity. The decryption key exists only in the link fragment. When the
+          entity dies — by reading or by Entity Expiration — nothing readable
+          is left anywhere.
+        </p>
+        <a
+          href="https://github.com/luckywemo/BURNLINK"
+          target="_blank"
+          rel="noreferrer"
+          className={`mt-4 inline-flex items-center gap-1.5 rounded transition hover:text-foreground ${FOCUS}`}
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 16 16"
+            fill="currentColor"
+            aria-hidden
+          >
+            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z" />
+          </svg>
+          source on GitHub — MIT
+        </a>
       </footer>
     </main>
   );
