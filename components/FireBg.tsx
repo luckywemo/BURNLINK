@@ -14,7 +14,7 @@ export default function FireBg() {
       const freeze = () => {
         v.pause();
         try {
-          v.currentTime = 1.2;
+          v.currentTime = 2.4; // frame where the bottom flame cluster is dense
         } catch {
           /* seek unsupported — first frame is fine */
         }
@@ -27,7 +27,7 @@ export default function FireBg() {
   return (
     <video
       ref={ref}
-      className="fire-bg h-full w-full object-cover opacity-40"
+      className="fire-bg h-full w-full object-cover object-bottom opacity-60"
       src="/fire-bg.mp4"
       autoPlay
       muted

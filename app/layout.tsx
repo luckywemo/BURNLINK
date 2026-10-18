@@ -35,7 +35,7 @@ export default function RootLayout({
       <body className="bg-background font-sans text-foreground antialiased">
         <div className="pointer-events-none fixed inset-0 z-0 overflow-hidden">
           <FireBg />
-          <div className="absolute inset-0 bg-gradient-to-b from-background/60 via-background/75 to-background/90" />
+          <div className="absolute inset-0 bg-gradient-to-b from-background/75 via-background/60 to-background/80" />
           <div className="ember-glow absolute inset-0" />
           <div className="dot-grid absolute inset-0" />
         </div>
