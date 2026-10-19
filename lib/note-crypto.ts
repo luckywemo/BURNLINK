@@ -36,15 +36,60 @@ export async function sha256b64(s: string): Promise<string> {
   return b64encode(d);
 }
 
+// Optional passphrase layer. When set, the URL fragment carries a random
+// seed (not the key) and the real AES key is derived from seed + passphrase
+// via PBKDF2 — so the link alone is inert and the passphrase is shared
+// out-of-band. Without a passphrase the fragment carries the raw AES key,
+// exactly as before (backwards compatible with existing links).
+async function deriveKey(
+  seed: Uint8Array,
+  passphrase: string
+): Promise<CryptoKey> {
+  const base = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(passphrase),
+    "PBKDF2",
+    false,
+    ["deriveKey"]
+  );
+  return crypto.subtle.deriveKey(
+    {
+      name: "PBKDF2",
+      salt: seed as BufferSource,
+      iterations: 600_000,
+      hash: "SHA-256",
+    },
+    base,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"]
+  );
+}
+
 export async function encryptNote(
-  plaintext: string
+  plaintext: string,
+  passphrase?: string
 ): Promise<{ iv: string; ct: string; urlKey: string }> {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  if (passphrase) {
+    const seed = crypto.getRandomValues(new Uint8Array(32));
+    const key = await deriveKey(seed, passphrase);
+    const ct = await crypto.subtle.encrypt(
+      { name: "AES-GCM", iv },
+      key,
+      new TextEncoder().encode(plaintext)
+    );
+    return {
+      iv: b64encode(iv),
+      ct: b64encode(ct),
+      urlKey: b64urlEncode(seed),
+    };
+  }
   const key = await crypto.subtle.generateKey(
     { name: "AES-GCM", length: 256 },
     true,
     ["encrypt", "decrypt"]
   );
-  const iv = crypto.getRandomValues(new Uint8Array(12));
   const ct = await crypto.subtle.encrypt(
     { name: "AES-GCM", iv },
     key,
@@ -61,15 +106,63 @@ export async function encryptNote(
 export async function decryptNote(
   ivB64: string,
   ctB64: string,
-  urlKey: string
+  urlKey: string,
+  passphrase?: string
 ): Promise<string> {
-  const key = await crypto.subtle.importKey(
+  const key = passphrase
+    ? await deriveKey(b64urlDecode(urlKey), passphrase)
+    : await crypto.subtle.importKey(
+        "raw",
+        b64urlDecode(urlKey) as BufferSource,
+        { name: "AES-GCM", length: 256 },
+        false,
+        ["decrypt"]
+      );
+  const pt = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv: b64decode(ivB64) as BufferSource },
+    key,
+    b64decode(ctB64) as BufferSource
+  );
+  return new TextDecoder().decode(pt);
+}
+
+// Replies: a new entity pointed back at the original via its `replyto`
+// attribute. The reply key is SHA-256 of the note's fragment secret — so
+// the only readers are exactly the two people holding the link.
+async function replyCryptoKey(urlKey: string): Promise<CryptoKey> {
+  const d = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(urlKey)
+  );
+  return crypto.subtle.importKey(
     "raw",
-    b64urlDecode(urlKey) as BufferSource,
+    d,
     { name: "AES-GCM", length: 256 },
     false,
-    ["decrypt"]
+    ["encrypt", "decrypt"]
   );
+}
+
+export async function encryptReply(
+  text: string,
+  urlKey: string
+): Promise<{ iv: string; ct: string }> {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const key = await replyCryptoKey(urlKey);
+  const ct = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv },
+    key,
+    new TextEncoder().encode(text)
+  );
+  return { iv: b64encode(iv), ct: b64encode(ct) };
+}
+
+export async function decryptReply(
+  ivB64: string,
+  ctB64: string,
+  urlKey: string
+): Promise<string> {
+  const key = await replyCryptoKey(urlKey);
   const pt = await crypto.subtle.decrypt(
     { name: "AES-GCM", iv: b64decode(ivB64) as BufferSource },
     key,

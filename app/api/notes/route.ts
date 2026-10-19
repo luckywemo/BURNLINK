@@ -18,6 +18,9 @@ export async function POST(req: NextRequest) {
     ttl?: number;
     once?: boolean;
     bh?: string;
+    pw?: boolean;
+    replyTo?: string;
+    replies?: boolean;
   };
   try {
     body = await req.json();
@@ -25,7 +28,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "bad json" }, { status: 400 });
   }
 
-  const { iv, ct, ttl, once, bh } = body;
+  const { iv, ct, ttl, once, bh, pw, replyTo, replies } = body;
+  const isReply = typeof replyTo === "string" && /^0x[0-9a-f]{64}$/i.test(replyTo);
+  if (replyTo !== undefined && !isReply) {
+    return NextResponse.json({ error: "invalid reply target" }, { status: 400 });
+  }
   if (
     typeof iv !== "string" ||
     typeof ct !== "string" ||
@@ -45,11 +52,23 @@ export async function POST(req: NextRequest) {
   const { entityKey, txHash, expiresAt } = await client.createEntity({
     payload: jsonToPayload({ v: 1, iv, ct, ...(bh ? { bh } : {}) }),
     contentType: "application/json",
-    attributes: {
-      type: "burnlink",
-      v: i32(1),
-      mode: once ? "once" : "timed",
-    },
+    attributes: isReply
+      ? {
+          type: "burnlink-reply",
+          v: i32(1),
+          mode: "timed",
+          replyto: replyTo,
+        }
+      : {
+          type: "burnlink",
+          v: i32(1),
+          mode: once ? "once" : "timed",
+          // passphrase-gated notes get a public flag so the read page knows to
+          // prompt — the passphrase itself never leaves the browser
+          ...(pw ? { pw: i32(1) } : {}),
+          // sender opted in to replies — the read page offers a reply box
+          ...(replies ? { replies: i32(1) } : {}),
+        },
     expires: ExpirationTime.fromSeconds(ttl),
   });
 

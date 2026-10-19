@@ -1,14 +1,23 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { gsap, useGSAP } from "@/lib/gsap";
-import { Flame, Copy, Check } from "lucide-react";
+import { Flame, Copy, Check, ImagePlus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import EmberField from "@/components/EmberField";
 import ScrambleText from "@/components/ScrambleText";
-import { encryptNote, randomUrlToken, sha256b64 } from "@/lib/note-crypto";
+import SealedCount from "@/components/SealedCount";
+import NoteQR from "@/components/NoteQR";
+import LampGlow from "@/components/LampGlow";
+import CanvasReveal from "@/components/CanvasReveal";
+import GlyphVeil from "@/components/GlyphVeil";
+import { encryptNote, randomUrlToken, sha256b64, decryptReply } from "@/lib/note-crypto";
+import { imageToNoteDataUrl, notePlaintext } from "@/lib/image-note";
+import { arkivPublic } from "@/lib/arkiv-public";
+import { str } from "@arkiv-network/sdk";
+import { eq } from "@arkiv-network/sdk/query";
 import { useReducedMotion } from "@/lib/use-reduced-motion";
 import { EMBER, EMBER_SOFT, EMBER_GLOW } from "@/lib/tokens";
 
@@ -52,7 +61,29 @@ const STEPS = [
 const FOCUS =
   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70";
 
-type Result = { link: string; txHash: string; expiresAt: string };
+const MIN_PW = 4;
+
+// length + variety score → weak / medium / strong label shown while typing
+function pwStrength(p: string): { label: string; cls: string; w: number } {
+  let s = 0;
+  if (p.length >= 4) s++;
+  if (p.length >= 8) s++;
+  if (p.length >= 12) s++;
+  if (/[0-9]/.test(p) && /[a-zA-Z]/.test(p)) s++;
+  if (/[^a-zA-Z0-9]/.test(p)) s++;
+  if (p.length >= 4 && /\s/.test(p)) s++; // word phrases score well
+  if (s <= 2) return { label: "weak", cls: "text-destructive", w: 33 };
+  if (s <= 4) return { label: "medium", cls: "text-primary", w: 66 };
+  return { label: "strong", cls: "text-emerald-400", w: 100 };
+}
+
+type Result = {
+  link: string;
+  txHash: string;
+  expiresAt: string;
+  pw: boolean;
+  replies: boolean;
+};
 
 export default function Home() {
   const [text, setText] = useState("");
@@ -61,10 +92,20 @@ export default function Home() {
   const [customVal, setCustomVal] = useState("45");
   const [customUnit, setCustomUnit] = useState(60);
   const [once, setOnce] = useState(true);
+  const [usePw, setUsePw] = useState(false);
+  const [pw, setPw] = useState("");
+  const [allowReplies, setAllowReplies] = useState(true);
+  const [img, setImg] = useState<string | null>(null);
+  const [imgName, setImgName] = useState("");
+  const [imgBusy, setImgBusy] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [burning, setBurning] = useState(false);
   const [result, setResult] = useState<Result | null>(null);
   const [copied, setCopied] = useState(false);
+  const [retracted, setRetracted] = useState(false);
+  const [retractBusy, setRetractBusy] = useState(false);
+  const [replies, setReplies] = useState<string[]>([]);
   const [err, setErr] = useState("");
   const headerRef = useRef<HTMLElement>(null);
   const resultRef = useRef<HTMLDivElement>(null);
@@ -85,6 +126,42 @@ export default function Home() {
     },
     { scope: headerRef, dependencies: [reduced] },
   );
+
+  // While the sealed card is open, watch the chain for replies tagged
+  // `replyto = <entity key>` and decrypt them with the link's fragment secret.
+  useEffect(() => {
+    if (!result || !result.replies) return;
+    const key = result.link.match(/\/n\/(0x[0-9a-f]+)/)?.[1];
+    const urlKey = result.link.match(/#k=([^&]+)/)?.[1];
+    if (!key || !urlKey) return;
+    let stop = false;
+    const tick = async () => {
+      try {
+        const page = await arkivPublic
+          .select("*")
+          .where(eq("replyto", str(key)))
+          .fetch();
+        const out: string[] = [];
+        for (const e of page.entities) {
+          try {
+            const j = e.toJson() as { iv: string; ct: string };
+            out.push(await decryptReply(j.iv, j.ct, urlKey));
+          } catch {
+            /* a reply that isn't ours to read — skip */
+          }
+        }
+        if (!stop) setReplies(out);
+      } catch {
+        /* query hiccup — retry next tick */
+      }
+    };
+    tick();
+    const id = setInterval(tick, 8000);
+    return () => {
+      stop = true;
+      clearInterval(id);
+    };
+  }, [result]);
 
   function playBurnAnimation(): Promise<void> {
     if (reduced) return Promise.resolve();
@@ -141,18 +218,29 @@ export default function Home() {
   }
 
   async function burn() {
-    if (!text.trim() || busy) return;
+    if ((!text.trim() && !img) || busy) return;
     setBusy(true);
     setErr("");
     try {
       const apiCall = (async () => {
-        const { iv, ct, urlKey } = await encryptNote(text);
+        const { iv, ct, urlKey } = await encryptNote(
+          notePlaintext(text.trim(), img),
+          usePw ? pw : undefined
+        );
         const burnToken = randomUrlToken();
         const bh = await sha256b64(burnToken);
         const res = await fetch("/api/notes", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ iv, ct, ttl, once, bh }),
+          body: JSON.stringify({
+            iv,
+            ct,
+            ttl,
+            once,
+            bh,
+            pw: usePw,
+            replies: allowReplies,
+          }),
         });
         if (!res.ok) throw new Error(await res.text());
         const out = await res.json();
@@ -163,6 +251,8 @@ export default function Home() {
         link: `${location.origin}/n/${out.key}#k=${out.urlKey}&b=${out.burnToken}`,
         txHash: out.txHash,
         expiresAt: out.expiresAt,
+        pw: usePw,
+        replies: allowReplies,
       });
     } catch {
       setErr("Could not seal the note. Try again.");
@@ -183,20 +273,49 @@ export default function Home() {
     <main className="relative z-10 mx-auto flex min-h-dvh max-w-2xl flex-col px-6 py-16">
       <EmberField />
 
-      <header ref={headerRef} className="mb-10">
-        <p className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.3em] text-primary">
+      <header ref={headerRef} className="relative mb-10 text-center">
+        <LampGlow />
+        <CanvasReveal />
+        <p className="relative flex items-center justify-center gap-2 text-sm font-semibold uppercase tracking-[0.3em] text-primary">
           <Flame size={16} aria-hidden className="animate-flicker" />
-          BurnLink
+          <span className="relative">
+            {"BURNLINK".split("").map((ch, i) => (
+              <span
+                key={i}
+                aria-hidden
+                className="logo-burn"
+                style={{ animationDelay: `${i * 0.14}s` }}
+              >
+                {ch}
+              </span>
+            ))}
+            <span className="sr-only">BurnLink</span>
+            {[18, 40, 62, 84].map((left, i) => (
+              <span
+                key={left}
+                aria-hidden
+                className="logo-ember"
+                style={{
+                  left: `${left}%`,
+                  animationDelay: `${i * 0.45}s`,
+                  ["--dx" as string]: `${(i % 2 === 0 ? 1 : -1) * (4 + i * 2)}px`,
+                }}
+              />
+            ))}
+          </span>
         </p>
-        <h1 className="mt-4 text-5xl font-bold leading-[1.05] tracking-tight sm:text-6xl">
+        <h1 className="relative mt-4 overflow-hidden text-[clamp(2rem,5.4vw,2.6rem)] font-bold leading-[1.08] tracking-tight sm:whitespace-nowrap">
           A note that{" "}
-          <span className="bg-gradient-to-r from-primary-soft via-primary to-ember bg-clip-text text-transparent">
-            provably dies.
+          <span className="burn-text font-serif italic tracking-normal">
+            <ScrambleText text="provably dies." speed={26} per={3} />
           </span>
         </h1>
-        <p className="mt-4 max-w-lg text-muted-foreground">
+        <p className="relative mx-auto mt-4 max-w-lg text-muted-foreground">
           Encrypted in your browser, stored as an Arkiv entity, deleted by the
           protocol — not by a promise.
+        </p>
+        <p className="relative mt-3 text-xs text-subtle">
+          <SealedCount />
         </p>
       </header>
 
@@ -208,21 +327,59 @@ export default function Home() {
 
       {!result ? (
         <div key="compose" className="space-y-5">
-          <div ref={composerRef} className="beam relative rounded-lg">
+          <div
+            ref={composerRef}
+            className="beam relative rounded-lg transition-shadow duration-300 focus-within:shadow-[0_0_50px_rgba(249,115,22,0.18)]"
+          >
             <label htmlFor="note" className="sr-only">
               Note text
             </label>
-            <textarea
-              id="note"
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              rows={6}
-              maxLength={12000}
-              placeholder="Type something that shouldn't live forever…"
-              className={`w-full rounded-lg border border-border bg-card/80 p-4 font-mono text-sm text-foreground outline-none backdrop-blur-sm transition placeholder:text-subtle focus:border-primary/60 ${
-                burning ? "opacity-0" : ""
-              }`}
-            />
+            {img ? (
+              <div className="relative rounded-lg border border-border bg-card/80 p-3 backdrop-blur-sm">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={img}
+                  alt="Attached image preview"
+                  className="mx-auto max-h-64 rounded-md"
+                />
+                <button
+                  type="button"
+                  aria-label="Remove image"
+                  onClick={() => {
+                    setImg(null);
+                    setImgName("");
+                  }}
+                  className={`absolute right-2 top-2 rounded-full border border-border bg-background/80 p-1.5 text-muted-foreground transition hover:border-destructive hover:text-destructive ${FOCUS}`}
+                >
+                  <X size={14} aria-hidden />
+                </button>
+                <p className="mt-2 truncate px-1 font-mono text-[10px] text-subtle">
+                  {imgName} — encrypted as an image note
+                </p>
+              </div>
+            ) : (
+              <textarea
+                id="note"
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                rows={6}
+                maxLength={12000}
+                placeholder="Type something that shouldn't live forever…"
+                className={`w-full rounded-lg border border-border bg-card/80 p-4 pb-8 font-mono text-sm text-foreground outline-none backdrop-blur-sm transition placeholder:text-subtle focus:border-primary/60 ${
+                  burning ? "opacity-0" : ""
+                }`}
+              />
+            )}
+            <span
+              aria-hidden
+              className="pointer-events-none absolute bottom-2.5 right-3 font-mono text-[10px] text-subtle/70"
+            >
+              {img
+                ? "image · aes-256-gcm"
+                : text.length > 0
+                  ? `${text.length.toLocaleString()} chars`
+                  : "aes-256-gcm"}
+            </span>
             {burning && (
               <div className="pointer-events-none absolute inset-0 overflow-visible p-4 font-mono text-sm">
                 {text
@@ -326,17 +483,113 @@ export default function Home() {
               />
               burn after reading
             </label>
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={async (e) => {
+                const f = e.target.files?.[0];
+                e.target.value = "";
+                if (!f) return;
+                setImgBusy(true);
+                setErr("");
+                try {
+                  setImg(await imageToNoteDataUrl(f));
+                  setImgName(f.name);
+                } catch {
+                  setErr(
+                    "That image can't fit a note even compressed — try a smaller one."
+                  );
+                }
+                setImgBusy(false);
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => fileRef.current?.click()}
+              disabled={imgBusy}
+              className={`flex items-center gap-1.5 rounded-lg border border-border bg-card/80 px-3 py-2 text-muted-foreground transition hover:border-primary/50 hover:text-foreground disabled:opacity-50 ${FOCUS}`}
+            >
+              <ImagePlus size={14} aria-hidden />
+              {imgBusy ? "compressing…" : "image"}
+            </button>
+            <label className="flex cursor-pointer items-center gap-2 text-muted-foreground">
+              <input
+                type="checkbox"
+                checked={usePw}
+                onChange={(e) => setUsePw(e.target.checked)}
+                className="accent-orange-500"
+              />
+              require passphrase
+            </label>
+            <label className="flex cursor-pointer items-center gap-2 text-muted-foreground">
+              <input
+                type="checkbox"
+                checked={allowReplies}
+                onChange={(e) => setAllowReplies(e.target.checked)}
+                className="accent-orange-500"
+              />
+              allow replies
+            </label>
           </div>
 
-          <Button
-            onClick={burn}
-            disabled={busy || !text.trim()}
-            size="lg"
-            className="w-full"
-          >
-            <Flame size={18} aria-hidden />
-            {busy ? "Sealing…" : "Seal & burn"}
-          </Button>
+          {usePw && (
+            <div className="space-y-1.5">
+              <Input
+                type="text"
+                value={pw}
+                onChange={(e) => setPw(e.target.value)}
+                placeholder={`passphrase (${MIN_PW}+ chars — a short phrase beats symbols)`}
+                aria-label="Passphrase"
+                className="font-mono text-sm"
+              />
+              {pw.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <div className="h-1 w-24 overflow-hidden rounded-full bg-border">
+                    <div
+                      className={`h-full transition-all ${
+                        pwStrength(pw).label === "weak"
+                          ? "bg-destructive"
+                          : pwStrength(pw).label === "medium"
+                            ? "bg-primary"
+                            : "bg-emerald-400"
+                      }`}
+                      style={{ width: `${pwStrength(pw).w}%` }}
+                    />
+                  </div>
+                  <span className={`text-xs ${pwStrength(pw).cls}`}>
+                    {pwStrength(pw).label}
+                  </span>
+                  {pw.length < MIN_PW && (
+                    <span className="text-xs text-subtle">
+                      · {MIN_PW - pw.length} more chars needed
+                    </span>
+                  )}
+                </div>
+              )}
+              <p className="text-xs text-subtle">
+                Share the passphrase separately — it&apos;s never in the link
+                or on-chain.
+              </p>
+            </div>
+          )}
+
+          <div className="beam beam-btn rounded-lg">
+            <Button
+              onClick={burn}
+              disabled={
+                busy ||
+                (!text.trim() && !img) ||
+                (usePw && pw.length < MIN_PW)
+              }
+              size="lg"
+              className="w-full"
+            >
+              <Flame size={18} aria-hidden />
+              {busy ? "Sealing…" : "Seal & burn"}
+            </Button>
+          </div>
           {err && <p className="text-sm text-destructive">{err}</p>}
 
           <section aria-label="How it works" className="pt-8">
@@ -360,17 +613,53 @@ export default function Home() {
         </div>
       ) : (
         <div key="result" ref={resultRef} className="animate-rise space-y-5">
-          <Card className="animate-ember border-primary/50 p-6">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-primary-soft">
-              sealed — your link is forged
-            </p>
-            <div className="mt-3 break-all font-mono text-sm leading-relaxed text-primary-mute">
-              <ScrambleText text={result.link} speed={18} per={4} />
+          <Card className="animate-ember relative overflow-hidden border-primary/50 p-6">
+            <GlyphVeil />
+            <div className="relative">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-primary-soft">
+                sealed — your link is forged
+              </p>
+              <div className="mt-3 break-all font-mono text-sm leading-relaxed text-primary-mute">
+                <ScrambleText text={result.link} speed={18} per={4} />
+              </div>
+              <p className="mt-3 text-xs text-subtle">
+                The decryption key lives after the <code>#</code> — it never
+                touched a server or the chain.
+                {result.pw &&
+                  " The note is also sealed behind your passphrase — share it separately."}
+              </p>
+              <div className="mt-4 flex items-center gap-4">
+                <NoteQR value={result.link} />
+                <p className="text-xs leading-relaxed text-subtle">
+                  Scan to hand the link to a nearby device — the QR is
+                  generated locally and carries the key with it.
+                </p>
+              </div>
+              {result.replies && (
+              <div className="mt-4 border-t border-border/60 pt-3">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-primary-soft">
+                  replies — watching the chain
+                </p>
+                {replies.length === 0 ? (
+                  <p className="mt-2 text-xs text-subtle">
+                    Keep this page open — if the recipient writes back, it
+                    decrypts here. Nothing is stored off-chain.
+                  </p>
+                ) : (
+                  <ul className="mt-2 space-y-2">
+                    {replies.map((r, i) => (
+                      <li
+                        key={i}
+                        className="animate-rise rounded-md border border-border bg-background/60 px-3 py-2 font-mono text-xs text-foreground"
+                      >
+                        {r}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+              )}
             </div>
-            <p className="mt-3 text-xs text-subtle">
-              The decryption key lives after the <code>#</code> — it never
-              touched a server or the chain.
-            </p>
           </Card>
 
           <Button
@@ -396,16 +685,52 @@ export default function Home() {
               creation tx on the explorer
             </a>
           </p>
-          <Button
-            variant="link"
-            className="h-auto p-0"
-            onClick={() => {
-              setResult(null);
-              setText("");
-            }}
-          >
-            write another
-          </Button>
+          <div className="flex items-center gap-4">
+            <Button
+              variant="link"
+              className="h-auto p-0"
+              onClick={() => {
+                setResult(null);
+                setText("");
+                setImg(null);
+                setImgName("");
+                setRetracted(false);
+              }}
+            >
+              write another
+            </Button>
+            {!retracted ? (
+              <Button
+                variant="link"
+                className="h-auto p-0 text-destructive hover:text-destructive/80"
+                disabled={retractBusy}
+                onClick={async () => {
+                  if (retractBusy) return;
+                  setRetractBusy(true);
+                  try {
+                    const m = result.link.match(/\/n\/(0x[0-9a-f]+)#.*&b=([^&\s]+)/);
+                    if (m) {
+                      await fetch(`/api/notes/${m[1]}/burn`, {
+                        method: "POST",
+                        headers: { "content-type": "application/json" },
+                        body: JSON.stringify({ b: m[2] }),
+                      });
+                    }
+                    setRetracted(true);
+                  } catch {
+                    setRetracted(true);
+                  }
+                  setRetractBusy(false);
+                }}
+              >
+                {retractBusy ? "burning…" : "retract — burn it now"}
+              </Button>
+            ) : (
+              <span className="text-xs text-destructive">
+                burned — the link is dead.
+              </span>
+            )}
+          </div>
         </div>
       )}
 

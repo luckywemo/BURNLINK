@@ -10,14 +10,34 @@ Built for **Arkiv: Global Tour Stop 🌍** (9–18 Oct 2026). Tracks entered:
 
 ## How it works
 
-1. You type a note. The browser encrypts it with **AES-GCM-256** (WebCrypto).
+1. You type a note — or attach an **image**. The browser encrypts it with
+   **AES-GCM-256** (WebCrypto).
 2. Only the ciphertext becomes an Arkiv entity — `{ iv, ct, bh }` — with the
-   Entity Expiration you picked (10 min → 7 days).
+   Entity Expiration you picked (15 seconds → 30 days).
 3. The decryption key is placed **inside the link fragment** (`#k=…&b=…`).
    Fragments are never sent over the network.
 4. The recipient opens the link: ciphertext is fetched with a credential-free
    **public client**, decrypted locally, and — for burn-after-read notes — the
    entity is **deleted on-chain**. Reloading the link shows "gone".
+
+## Features
+
+- **Burn-after-read** — reading fires a real `deleteEntity`; the explorer
+  shows the deletion transaction.
+- **Timed expiry** — 15s → 30d via Arkiv Entity Expiration. The holder can
+  **extend the fuse** (`extendEntity` +5m/+1h) or **burn it now** — both gated
+  by the burn-capability token.
+- **Passphrase layer** — optional second secret; PBKDF2-derived key, wrong
+  guesses can't burn the note.
+- **Image notes** — downscaled client-side to fit the entity cap, encrypted
+  inside the same envelope; indistinguishable from text on-chain.
+- **Replies** — sender-opt-in. The recipient's reply is a `burnlink-reply`
+  entity pointed at the note via a `replyto` attribute, readable only by
+  link-holders.
+- **QR hand-off** — the link QR is generated locally; the key never leaves the
+  browser.
+- **Live sealed counter** — `getEntityNonce` on the relay; burns still count.
+- **Sender retract** — kill the link right after sealing.
 
 ## Why Arkiv is load-bearing
 

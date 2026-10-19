@@ -31,8 +31,9 @@
   --color-primary-foreground: var(--primary-foreground);
   --color-ember: var(--ember);
   --color-destructive: var(--destructive);
-  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
-  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+  --font-sans: var(--font-sans-var), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-mono-var), ui-monospace, monospace;
+  --font-serif: var(--font-serif-var), Georgia, serif;
 }
 
 body {
@@ -131,6 +132,9 @@ body {
   -webkit-mask:
     linear-gradient(#000 0 0) content-box,
     linear-gradient(#000 0 0);
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
   -webkit-mask-composite: xor;
   mask-composite: exclude;
   animation: beamSpin 6s linear infinite;
@@ -142,10 +146,112 @@ body {
   }
 }
 
+/* Same beam, faster + tighter — the Seal button's chasing ember edge */
+.beam-btn::before {
+  animation-duration: 3.5s;
+}
+
+/* ── Lamp effect (hero light cone) ───────────────────────────────── */
+@keyframes lampLine {
+  from { transform: translateX(-50%) scaleX(0.2); opacity: 0; }
+  60% { opacity: 1; }
+  to { transform: translateX(-50%) scaleX(1); opacity: 1; }
+}
+.animate-lamp-line { animation: lampLine 1.6s cubic-bezier(0.22, 0.61, 0.36, 1) both; }
+
+@keyframes lampBreathe {
+  0%, 100% { opacity: 0.85; }
+  50% { opacity: 1; }
+}
+.animate-lamp-breathe { animation: lampBreathe 5s ease-in-out infinite; }
+
+/* ── Burning text — the headline's accent literally smoulders ────── */
+@keyframes burnText {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+@keyframes emberGlow {
+  0%, 100% { filter: drop-shadow(0 0 10px rgba(249, 115, 22, 0.3)); }
+  45% { filter: drop-shadow(0 0 24px rgba(249, 115, 22, 0.6)); }
+  60% { filter: drop-shadow(0 0 16px rgba(249, 115, 22, 0.42)); }
+}
+.burn-text {
+  background-image: linear-gradient(
+    100deg,
+    #fde68a 0%,
+    #fb923c 22%,
+    #f97316 42%,
+    #dc2626 68%,
+    #fb923c 88%,
+    #fde68a 100%
+  );
+  background-size: 240% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation:
+    burnText 5s ease-in-out infinite,
+    emberGlow 3.6s ease-in-out infinite;
+}
+
+/* ── Burning wordmark — letters lick like flame, embers rise ─────── */
+@keyframes letterLick {
+  0%, 100% {
+    transform: translateY(0);
+    text-shadow: 0 0 3px rgba(249, 115, 22, 0.15);
+  }
+  38% {
+    text-shadow:
+      0 0 9px rgba(251, 146, 60, 0.85),
+      0 0 20px rgba(249, 115, 22, 0.4);
+  }
+  52% {
+    transform: translateY(-1.5px) skewX(-2deg);
+    text-shadow:
+      0 0 12px rgba(253, 230, 138, 0.95),
+      0 0 26px rgba(249, 115, 22, 0.55);
+    filter: brightness(1.35);
+  }
+  66% {
+    transform: translateY(0);
+    filter: none;
+  }
+}
+.logo-burn {
+  display: inline-block;
+  animation: letterLick 1.9s ease-in-out infinite;
+}
+
+@keyframes emberRise {
+  0% { transform: translate(0, 0) scale(1); opacity: 0; }
+  12% { opacity: 1; }
+  70% { opacity: 0.8; }
+  100% {
+    transform: translate(var(--dx, 4px), -34px) scale(0.4);
+    opacity: 0;
+  }
+}
+.logo-ember {
+  position: absolute;
+  bottom: 100%;
+  width: 3px;
+  height: 3px;
+  border-radius: 9999px;
+  background: #fdba74;
+  box-shadow: 0 0 6px rgba(251, 146, 60, 0.9);
+  animation: emberRise 1.7s ease-out infinite;
+}
+
 /* ── prefers-reduced-motion: kill ambient + signature motion ──────── */
 @media (prefers-reduced-motion: reduce) {
   .animate-ember, .animate-burnbar, .animate-flicker, .animate-rise,
+  .animate-lamp-line, .animate-lamp-breathe, .logo-burn,
   .beam::before { animation: none; }
   .animate-burnbar { width: 0; }
   .animate-flicker { color: #f97316; }
+  .logo-ember { display: none; }
+  .burn-text {
+    animation: none;
+    background-image: linear-gradient(100deg, #fb923c, #dc2626);
+  }
 }

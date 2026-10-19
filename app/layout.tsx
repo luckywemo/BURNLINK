@@ -1,15 +1,21 @@
 import type { Metadata } from "next";
-import localFont from "next/font/local";
+import { Space_Grotesk, JetBrains_Mono, Instrument_Serif } from "next/font/google";
 import FireBg from "@/components/FireBg";
 import "./globals.css";
 
-const geistSans = localFont({
-  src: "./fonts/Geist-Variable.woff2",
-  variable: "--font-geist-sans",
+const grotesk = Space_Grotesk({
+  subsets: ["latin"],
+  variable: "--font-sans-var",
 });
-const geistMono = localFont({
-  src: "./fonts/GeistMono-Variable.woff2",
-  variable: "--font-geist-mono",
+const jbMono = JetBrains_Mono({
+  subsets: ["latin"],
+  variable: "--font-mono-var",
+});
+const instrument = Instrument_Serif({
+  subsets: ["latin"],
+  weight: "400",
+  style: ["normal", "italic"],
+  variable: "--font-serif-var",
 });
 
 export const metadata: Metadata = {
@@ -34,7 +40,10 @@ export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" className={`${geistSans.variable} ${geistMono.variable}`}>
+    <html
+      lang="en"
+      className={`${grotesk.variable} ${jbMono.variable} ${instrument.variable}`}
+    >
       <body className="bg-background font-sans text-foreground antialiased">
         <div className="pointer-events-none fixed inset-0 z-0 overflow-hidden">
           <FireBg />
