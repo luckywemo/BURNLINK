@@ -74,7 +74,11 @@ export default function EmberField() {
     window.addEventListener("resize", onResize);
 
     let raf = 0;
+    let frame = 0;
     const tick = () => {
+      // Ambient drift reads fine at ~30fps — skipping alternate frames
+      // halves the canvas cost on software-rendered displays.
+      if (frame++ % 2 === 0) {
       ctx.clearRect(0, 0, w, h);
       if (parts.length < 55 && Math.random() < 0.35) spawn(1);
       for (let i = parts.length - 1; i >= 0; i--) {
@@ -89,6 +93,7 @@ export default function EmberField() {
         ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
         ctx.fill();
         if (t >= 1 || p.y < -12) parts.splice(i, 1);
+      }
       }
       raf = requestAnimationFrame(tick);
     };

@@ -91,8 +91,12 @@ export default function GlyphVeil() {
       };
     }
     let raf = 0;
+    let frame = 0;
     const loop = () => {
-      draw();
+      // Idle shimmer doesn't need 60fps — halving the draw rate when the
+      // pointer is off the veil cuts the fillText load on weak GPUs while
+      // pointer interaction still gets full-rate response.
+      if (mouse.x > -9999 || frame++ % 2 === 0) draw();
       raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);

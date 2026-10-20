@@ -992,7 +992,7 @@ export default function Home() {
             className="w-full"
           >
             {copied ? <Check size={18} aria-hidden /> : <Copy size={18} aria-hidden />}
-            {copied ? "Copied — send it" : "Copy link"}
+            {copied ? "Copied" : "Copy link"}
           </Button>
 
           {result.signer ? (
