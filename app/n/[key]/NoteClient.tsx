@@ -380,17 +380,20 @@ export default function NoteClient({ noteKey }: { noteKey: string }) {
   // link-holders. Messages flow both ways; this is one side of the thread.
   async function postChat(payload: string, preview: ChatMsg) {
     const p = pendingRef.current;
-    if (!p || replyBusy) return;
+    // pendingRef is empty on a fresh load of an already-gone note — the
+    // urlKey lives in the fragment regardless, so replies still work.
+    const key = p?.urlKey ?? urlKey;
+    if (!key || replyBusy) return;
     setReplyBusy(true);
     try {
-      const { iv, ct } = await encryptReply(payload, p.urlKey);
+      const { iv, ct } = await encryptReply(payload, key);
       const r = await fetch("/api/notes", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           iv,
           ct,
-          ttl: p.msgTtl,
+          ttl: p?.msgTtl ?? 86400,
           once: false,
           replyTo: noteKey,
           from: "r",
@@ -697,7 +700,9 @@ export default function NoteClient({ noteKey }: { noteKey: string }) {
           {phase === "dead" &&
             (pendingRef.current?.allowReplies || chat.length > 0) &&
             replyBlock}
-          {phase === "gone" && chat.length > 0 && replyBlock}
+          {phase === "gone" &&
+            (pendingRef.current?.allowReplies !== false || chat.length > 0) &&
+            replyBlock}
           <Link
             href="/"
             className={`inline-flex items-center gap-1.5 rounded-lg border border-primary/50 px-4 py-2 font-mono text-xs text-primary-soft transition hover:bg-primary hover:text-primary-foreground ${FOCUS}`}
