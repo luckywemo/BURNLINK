@@ -995,13 +995,18 @@ export default function Home() {
             {copied ? "Copied — send it" : "Copy link"}
           </Button>
 
-          {result.signer && (
+          {result.signer ? (
             <p className="font-mono text-[11px] text-subtle">
               signed by your session wallet{" "}
               <span className="text-primary-soft">
                 {result.signer.slice(0, 10)}…{result.signer.slice(-6)}
               </span>{" "}
               — this browser holds the key, nothing else does
+            </p>
+          ) : (
+            <p className="font-mono text-[11px] text-subtle">
+              signed by the shared BurnLink relay — your note is unlinkable to
+              you by design
             </p>
           )}
           <p className="text-xs text-subtle">

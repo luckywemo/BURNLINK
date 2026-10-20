@@ -7,9 +7,9 @@ import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { arkivPublic } from "@/lib/arkiv-public";
 import { RELAY_ADDRESS } from "@/lib/tokens";
 
-const RPC =
-  process.env.NEXT_PUBLIC_ARKIV_RPC ??
-  "https://rpc.tiramisu.db-chain.testnet.arkiv.network";
+// Client-signed writes and balance reads go through the /api/arkiv proxy —
+// the access key is appended server-side and never ships to the browser.
+const RPC = "/api/arkiv";
 
 const KEY_STORAGE = "burnlink.sw";
 
