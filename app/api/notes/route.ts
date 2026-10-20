@@ -21,6 +21,8 @@ export async function POST(req: NextRequest) {
     pw?: boolean;
     replyTo?: string;
     replies?: boolean;
+    from?: string;
+    msgttl?: number;
   };
   try {
     body = await req.json();
@@ -28,10 +30,22 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "bad json" }, { status: 400 });
   }
 
-  const { iv, ct, ttl, once, bh, pw, replyTo, replies } = body;
+  const { iv, ct, ttl, once, bh, pw, replyTo, replies, from, msgttl } = body;
   const isReply = typeof replyTo === "string" && /^0x[0-9a-f]{64}$/i.test(replyTo);
   if (replyTo !== undefined && !isReply) {
     return NextResponse.json({ error: "invalid reply target" }, { status: 400 });
+  }
+  if (from !== undefined && from !== "s" && from !== "r") {
+    return NextResponse.json({ error: "invalid from" }, { status: 400 });
+  }
+  if (
+    msgttl !== undefined &&
+    (typeof msgttl !== "number" ||
+      !Number.isInteger(msgttl) ||
+      msgttl < MIN_TTL ||
+      msgttl > MAX_TTL)
+  ) {
+    return NextResponse.json({ error: "invalid msgttl" }, { status: 400 });
   }
   if (
     typeof iv !== "string" ||
@@ -58,6 +72,8 @@ export async function POST(req: NextRequest) {
           v: i32(1),
           mode: "timed",
           replyto: replyTo,
+          // "s" sender / "r" recipient — lets both sides render a real thread
+          ...(from ? { from } : {}),
         }
       : {
           type: "burnlink",
@@ -68,6 +84,8 @@ export async function POST(req: NextRequest) {
           ...(pw ? { pw: i32(1) } : {}),
           // sender opted in to replies — the read page offers a reply box
           ...(replies ? { replies: i32(1) } : {}),
+          // sender-chosen per-message burn time for chat entities (seconds)
+          ...(msgttl ? { msgttl: i32(msgttl) } : {}),
         },
     expires: ExpirationTime.fromSeconds(ttl),
   });

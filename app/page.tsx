@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { gsap, useGSAP } from "@/lib/gsap";
-import { Flame, Copy, Check, ImagePlus, X } from "lucide-react";
+import { Flame, Copy, Check, ImagePlus, X, Mic, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -13,10 +13,14 @@ import NoteQR from "@/components/NoteQR";
 import LampGlow from "@/components/LampGlow";
 import CanvasReveal from "@/components/CanvasReveal";
 import GlyphVeil from "@/components/GlyphVeil";
-import { encryptNote, randomUrlToken, sha256b64, decryptReply } from "@/lib/note-crypto";
+import { encryptNote, randomUrlToken, sha256b64, decryptReply, encryptReply } from "@/lib/note-crypto";
+import { fetchReplyThread, type ChatMsg } from "@/lib/reply-thread";
+import { startVoiceNote, audioEnvelope, type VoiceRecorder } from "@/lib/voice-note";
 import { imageToNoteDataUrl, notePlaintext } from "@/lib/image-note";
 import { arkivPublic } from "@/lib/arkiv-public";
-import { str } from "@arkiv-network/sdk";
+import { getSessionWallet, sweepSessionGas } from "@/lib/ephemeral-wallet";
+import { ExpirationTime, jsonToPayload, str } from "@arkiv-network/sdk";
+import { i32 } from "@arkiv-network/sdk/attr";
 import { eq } from "@arkiv-network/sdk/query";
 import { useReducedMotion } from "@/lib/use-reduced-motion";
 import { EMBER, EMBER_SOFT, EMBER_GLOW } from "@/lib/tokens";
@@ -83,6 +87,8 @@ type Result = {
   expiresAt: string;
   pw: boolean;
   replies: boolean;
+  msgTtl?: number;
+  signer?: string;
 };
 
 export default function Home() {
@@ -95,6 +101,7 @@ export default function Home() {
   const [usePw, setUsePw] = useState(false);
   const [pw, setPw] = useState("");
   const [allowReplies, setAllowReplies] = useState(true);
+  const [msgTtl, setMsgTtl] = useState(86400);
   const [img, setImg] = useState<string | null>(null);
   const [imgName, setImgName] = useState("");
   const [imgBusy, setImgBusy] = useState(false);
@@ -105,7 +112,16 @@ export default function Home() {
   const [copied, setCopied] = useState(false);
   const [retracted, setRetracted] = useState(false);
   const [retractBusy, setRetractBusy] = useState(false);
-  const [replies, setReplies] = useState<string[]>([]);
+  const [replies, setReplies] = useState<ChatMsg[]>([]);
+  const [chatInput, setChatInput] = useState("");
+  const [chatBusy, setChatBusy] = useState(false);
+  const [recSecs, setRecSecs] = useState<number | null>(null);
+  const recRef = useRef<VoiceRecorder | null>(null);
+  const recTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [noteAudio, setNoteAudio] = useState<string | null>(null);
+  const [noteRecSecs, setNoteRecSecs] = useState<number | null>(null);
+  const noteRecRef = useRef<VoiceRecorder | null>(null);
+  const noteRecTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [err, setErr] = useState("");
   const headerRef = useRef<HTMLElement>(null);
   const resultRef = useRef<HTMLDivElement>(null);
@@ -137,20 +153,8 @@ export default function Home() {
     let stop = false;
     const tick = async () => {
       try {
-        const page = await arkivPublic
-          .select("*")
-          .where(eq("replyto", str(key)))
-          .fetch();
-        const out: string[] = [];
-        for (const e of page.entities) {
-          try {
-            const j = e.toJson() as { iv: string; ct: string };
-            out.push(await decryptReply(j.iv, j.ct, urlKey));
-          } catch {
-            /* a reply that isn't ours to read — skip */
-          }
-        }
-        if (!stop) setReplies(out);
+        const t = await fetchReplyThread(key, urlKey, "s");
+        if (!stop) setReplies(t);
       } catch {
         /* query hiccup — retry next tick */
       }
@@ -218,17 +222,53 @@ export default function Home() {
   }
 
   async function burn() {
-    if ((!text.trim() && !img) || busy) return;
+    if ((!text.trim() && !img && !noteAudio) || busy) return;
     setBusy(true);
     setErr("");
     try {
       const apiCall = (async () => {
         const { iv, ct, urlKey } = await encryptNote(
-          notePlaintext(text.trim(), img),
+          notePlaintext(text.trim(), img, noteAudio),
           usePw ? pw : undefined
         );
         const burnToken = randomUrlToken();
         const bh = await sha256b64(burnToken);
+        // Prefer the session wallet: the entity is created and signed
+        // client-side by a key this browser just generated. If the gas drip
+        // hasn't landed (or fails), the shared relay signs instead.
+        const sw = getSessionWallet();
+        const funded = await Promise.race([
+          sw.ensureFunded(),
+          new Promise<false>((r) => setTimeout(() => r(false), 8000)),
+        ]);
+        if (funded) {
+          try {
+            const r = await sw.client.createEntity({
+              payload: jsonToPayload({ v: 1, iv, ct, bh }),
+              contentType: "application/json",
+              attributes: {
+                type: "burnlink",
+                v: i32(1),
+                mode: once ? "once" : "timed",
+                ...(usePw ? { pw: i32(1) } : {}),
+                ...(allowReplies ? { replies: i32(1) } : {}),
+                ...(allowReplies ? { msgttl: i32(msgTtl) } : {}),
+              },
+              expires: ExpirationTime.fromSeconds(ttl),
+            });
+            void sweepSessionGas(); // return unused dust to the vault
+            return {
+              key: r.entityKey,
+              txHash: r.txHash,
+              expiresAt: r.expiresAt.toString(),
+              urlKey,
+              burnToken,
+              signer: sw.address,
+            };
+          } catch {
+            /* gas ran dry mid-session or RPC hiccup — relay takes it */
+          }
+        }
         const res = await fetch("/api/notes", {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -240,6 +280,7 @@ export default function Home() {
             bh,
             pw: usePw,
             replies: allowReplies,
+            msgttl: allowReplies ? msgTtl : undefined,
           }),
         });
         if (!res.ok) throw new Error(await res.text());
@@ -253,6 +294,8 @@ export default function Home() {
         expiresAt: out.expiresAt,
         pw: usePw,
         replies: allowReplies,
+        msgTtl: allowReplies ? msgTtl : undefined,
+        signer: out.signer,
       });
     } catch {
       setErr("Could not seal the note. Try again.");
@@ -260,6 +303,119 @@ export default function Home() {
       setBusy(false);
       setBurning(false);
     }
+  }
+
+  // Sender's side of the on-chain chat: a burnlink-reply entity tagged with
+  // `from: "s"`, encrypted to the same link-derived key the recipient uses.
+  async function postChat(payload: string, preview: ChatMsg) {
+    if (!result || chatBusy) return;
+    const key = result.link.match(/\/n\/(0x[0-9a-f]+)/)?.[1];
+    const urlKey = result.link.match(/#k=([^&]+)/)?.[1];
+    if (!key || !urlKey) return;
+    setChatBusy(true);
+    try {
+      const { iv, ct } = await encryptReply(payload, urlKey);
+      const r = await fetch("/api/notes", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          iv,
+          ct,
+          ttl: result.msgTtl ?? 86400,
+          once: false,
+          replyTo: key,
+          from: "s",
+        }),
+      });
+      if (!r.ok) throw new Error();
+      setReplies((c) => [...c, preview]);
+    } catch {
+      /* next poll will show the truth */
+    }
+    setChatBusy(false);
+  }
+
+  async function sendChat() {
+    const msg = chatInput.trim();
+    if (!msg) return;
+    await postChat(msg, { self: true, text: msg, at: BigInt(Date.now()) });
+    setChatInput("");
+  }
+
+  async function toggleRecord() {
+    if (recRef.current) {
+      const rec = recRef.current;
+      recRef.current = null;
+      if (recTimerRef.current) clearInterval(recTimerRef.current);
+      recTimerRef.current = null;
+      setRecSecs(null);
+      const dataUrl = await rec.stop();
+      if (dataUrl) {
+        await postChat(audioEnvelope(dataUrl), {
+          self: true,
+          text: "voice note",
+          at: BigInt(Date.now()),
+          audio: dataUrl,
+        });
+      }
+      return;
+    }
+    try {
+      recRef.current = await startVoiceNote();
+    } catch {
+      return; // mic permission denied — stay quiet, text still works
+    }
+    setRecSecs(0);
+    const t0 = Date.now();
+    recTimerRef.current = setInterval(() => {
+      const s = Math.floor((Date.now() - t0) / 1000);
+      if (s >= 15) {
+        toggleRecord();
+      } else {
+        setRecSecs(s);
+      }
+    }, 250);
+  }
+
+  // Voice note as the note itself: mic → recording pill → preview → seal.
+  // The audio replaces the textarea content, exactly like an image note.
+  async function toggleNoteRecord() {
+    if (noteRecRef.current) {
+      const rec = noteRecRef.current;
+      noteRecRef.current = null;
+      if (noteRecTimerRef.current) clearInterval(noteRecTimerRef.current);
+      noteRecTimerRef.current = null;
+      setNoteRecSecs(null);
+      const dataUrl = await rec.stop();
+      if (dataUrl) setNoteAudio(dataUrl);
+      else setErr("Voice note ran past the size cap — keep it under ~15s.");
+      return;
+    }
+    try {
+      noteRecRef.current = await startVoiceNote();
+      getSessionWallet().ensureFunded(); // recording = intent to seal
+    } catch {
+      setErr("Mic permission denied — type your note instead.");
+      return;
+    }
+    setNoteRecSecs(0);
+    const t0 = Date.now();
+    noteRecTimerRef.current = setInterval(() => {
+      const s = Math.floor((Date.now() - t0) / 1000);
+      if (s >= 15) {
+        toggleNoteRecord();
+      } else {
+        setNoteRecSecs(s);
+      }
+    }, 250);
+  }
+
+  function cancelNoteRecord() {
+    noteRecRef.current?.cancel();
+    noteRecRef.current = null;
+    if (noteRecTimerRef.current) clearInterval(noteRecTimerRef.current);
+    noteRecTimerRef.current = null;
+    setNoteRecSecs(null);
   }
 
   const segmentCls = (active: boolean) =>
@@ -334,7 +490,51 @@ export default function Home() {
             <label htmlFor="note" className="sr-only">
               Note text
             </label>
-            {img ? (
+            {noteAudio ? (
+              <div className="relative rounded-lg border border-border bg-card/80 p-3 backdrop-blur-sm">
+                <audio controls src={noteAudio} className="w-full" />
+                <button
+                  type="button"
+                  aria-label="Remove voice note"
+                  onClick={() => setNoteAudio(null)}
+                  className={`absolute right-2 top-2 rounded-full border border-border bg-background/80 p-1.5 text-muted-foreground transition hover:border-destructive hover:text-destructive ${FOCUS}`}
+                >
+                  <X size={14} aria-hidden />
+                </button>
+                <p className="mt-2 px-1 font-mono text-[10px] text-subtle">
+                  voice note — encrypted as an audio note, burns like the rest
+                </p>
+              </div>
+            ) : noteRecSecs !== null ? (
+              <div className="flex items-center gap-3 rounded-lg border border-border bg-card/80 px-4 py-8 backdrop-blur-sm">
+                <span
+                  aria-hidden
+                  className="h-2.5 w-2.5 animate-pulse rounded-full bg-destructive"
+                />
+                <span className="font-mono text-xs text-foreground">
+                  recording… 0:{String(noteRecSecs).padStart(2, "0")} / 0:15
+                </span>
+                <span className="flex-1" />
+                <button
+                  type="button"
+                  onClick={toggleNoteRecord}
+                  aria-label="Stop recording"
+                  title="stop — preview the voice note"
+                  className={`rounded-md border border-primary/50 p-1.5 text-primary transition hover:bg-primary/15 ${FOCUS}`}
+                >
+                  <Square size={13} aria-hidden />
+                </button>
+                <button
+                  type="button"
+                  onClick={cancelNoteRecord}
+                  aria-label="Discard recording"
+                  title="discard"
+                  className={`rounded-md border border-border p-1.5 text-muted-foreground transition hover:border-destructive hover:text-destructive ${FOCUS}`}
+                >
+                  <X size={13} aria-hidden />
+                </button>
+              </div>
+            ) : img ? (
               <div className="relative rounded-lg border border-border bg-card/80 p-3 backdrop-blur-sm">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
@@ -361,7 +561,12 @@ export default function Home() {
               <textarea
                 id="note"
                 value={text}
-                onChange={(e) => setText(e.target.value)}
+                onChange={(e) => {
+                  setText(e.target.value);
+                  // first keystroke = intent to seal — start the gas drip now
+                  // so it's confirmed long before the user hits Seal
+                  getSessionWallet().ensureFunded();
+                }}
                 rows={6}
                 maxLength={12000}
                 placeholder="Type something that shouldn't live forever…"
@@ -370,15 +575,44 @@ export default function Home() {
                 }`}
               />
             )}
+            {!img && !noteAudio && noteRecSecs === null && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => fileRef.current?.click()}
+                  disabled={imgBusy}
+                  title="attach an image note"
+                  aria-label="Attach image"
+                  className={`absolute bottom-2 left-3 rounded-md p-1 transition ${FOCUS} ${
+                    imgBusy
+                      ? "animate-pulse text-primary"
+                      : "text-muted-foreground/70 hover:text-primary"
+                  }`}
+                >
+                  <ImagePlus size={15} aria-hidden />
+                </button>
+                <button
+                  type="button"
+                  onClick={toggleNoteRecord}
+                  title="record a voice note — up to 15s"
+                  aria-label="Record a voice note"
+                  className={`absolute bottom-2 left-9 rounded-md p-1 text-muted-foreground/70 transition hover:text-primary ${FOCUS}`}
+                >
+                  <Mic size={15} aria-hidden />
+                </button>
+              </>
+            )}
             <span
               aria-hidden
               className="pointer-events-none absolute bottom-2.5 right-3 font-mono text-[10px] text-subtle/70"
             >
               {img
                 ? "image · aes-256-gcm"
-                : text.length > 0
-                  ? `${text.length.toLocaleString()} chars`
-                  : "aes-256-gcm"}
+                : noteAudio
+                  ? "voice · aes-256-gcm"
+                  : text.length > 0
+                    ? `${text.length.toLocaleString()} chars`
+                    : "aes-256-gcm"}
             </span>
             {burning && (
               <div className="pointer-events-none absolute inset-0 overflow-visible p-4 font-mono text-sm">
@@ -505,15 +739,6 @@ export default function Home() {
                 setImgBusy(false);
               }}
             />
-            <button
-              type="button"
-              onClick={() => fileRef.current?.click()}
-              disabled={imgBusy}
-              className={`flex items-center gap-1.5 rounded-lg border border-border bg-card/80 px-3 py-2 text-muted-foreground transition hover:border-primary/50 hover:text-foreground disabled:opacity-50 ${FOCUS}`}
-            >
-              <ImagePlus size={14} aria-hidden />
-              {imgBusy ? "compressing…" : "image"}
-            </button>
             <label className="flex cursor-pointer items-center gap-2 text-muted-foreground">
               <input
                 type="checkbox"
@@ -532,6 +757,28 @@ export default function Home() {
               />
               allow replies
             </label>
+            {allowReplies && (
+              <div className="flex flex-wrap items-center gap-2 text-muted-foreground">
+                <span id="msgttl-label">msgs burn</span>
+                <div
+                  role="group"
+                  aria-labelledby="msgttl-label"
+                  className="flex flex-wrap overflow-hidden rounded-lg border border-border bg-card/80"
+                >
+                  {TTLS.map((t) => (
+                    <button
+                      key={t.value}
+                      type="button"
+                      aria-pressed={msgTtl === t.value}
+                      onClick={() => setMsgTtl(t.value)}
+                      className={segmentCls(msgTtl === t.value)}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           {usePw && (
@@ -580,7 +827,7 @@ export default function Home() {
               onClick={burn}
               disabled={
                 busy ||
-                (!text.trim() && !img) ||
+                (!text.trim() && !img && !noteAudio) ||
                 (usePw && pw.length < MIN_PW)
               }
               size="lg"
@@ -619,12 +866,20 @@ export default function Home() {
               <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-primary-soft">
                 sealed — your link is forged
               </p>
-              <div className="mt-3 break-all font-mono text-sm leading-relaxed text-primary-mute">
+              {/* link is unselectable while it scrambles — a mid-animation
+                  drag-copy produces a damaged key. Copy button + QR carry the
+                  real value. */}
+              <div
+                aria-label={result.link}
+                className="mt-3 select-none break-all font-mono text-sm leading-relaxed text-primary-mute"
+              >
                 <ScrambleText text={result.link} speed={18} per={4} />
               </div>
               <p className="mt-3 text-xs text-subtle">
                 The decryption key lives after the <code>#</code> — it never
-                touched a server or the chain.
+                touched a server or the chain. Share it with the{" "}
+                <span className="text-foreground">Copy link</span> button or the
+                QR below.
                 {result.pw &&
                   " The note is also sealed behind your passphrase — share it separately."}
               </p>
@@ -638,11 +893,14 @@ export default function Home() {
               {result.replies && (
               <div className="mt-4 border-t border-border/60 pt-3">
                 <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-primary-soft">
-                  replies — watching the chain
+                  chat — on-chain, encrypted to this link
+                </p>
+                <p className="mt-1 text-[11px] text-subtle">
+                  every message burns {(result.msgTtl ?? 86400) < 60 ? `${result.msgTtl}s` : (result.msgTtl ?? 86400) < 3600 ? `${(result.msgTtl ?? 86400) / 60} min` : (result.msgTtl ?? 86400) < 86400 ? `${(result.msgTtl ?? 86400) / 3600}h` : `${(result.msgTtl ?? 86400) / 86400}d`} after sending — one by one, on-chain
                 </p>
                 {replies.length === 0 ? (
                   <p className="mt-2 text-xs text-subtle">
-                    Keep this page open — if the recipient writes back, it
+                    Keep this page open — when the recipient writes back, it
                     decrypts here. Nothing is stored off-chain.
                   </p>
                 ) : (
@@ -650,12 +908,75 @@ export default function Home() {
                     {replies.map((r, i) => (
                       <li
                         key={i}
-                        className="animate-rise rounded-md border border-border bg-background/60 px-3 py-2 font-mono text-xs text-foreground"
+                        className={`animate-rise max-w-[85%] rounded-md border px-3 py-2 font-mono text-xs ${
+                          r.self
+                            ? "ml-auto border-primary/40 bg-primary/10 text-foreground"
+                            : "border-border bg-background/60 text-foreground"
+                        }`}
                       >
-                        {r}
+                        <span className="mb-0.5 block text-[10px] uppercase tracking-widest text-subtle">
+                          {r.self ? "you" : "them"}
+                        </span>
+                        {r.audio ? (
+                          <audio controls src={r.audio} className="h-8 max-w-[220px]" />
+                        ) : (
+                          r.text
+                        )}
                       </li>
                     ))}
                   </ul>
+                )}
+                {recSecs !== null ? (
+                  <div className="mt-2 flex items-center gap-3 rounded-lg border border-primary/50 bg-background/60 px-3 py-2">
+                    <span className="animate-pulse font-mono text-xs text-destructive">●</span>
+                    <span className="flex-1 font-mono text-xs text-primary-soft">
+                      recording… 0:{String(recSecs).padStart(2, "0")} / 0:15
+                    </span>
+                    <button
+                      type="button"
+                      onClick={toggleRecord}
+                      aria-label="Stop and send voice note"
+                      className={`rounded-md border border-primary/50 p-1.5 text-primary-soft transition hover:bg-primary hover:text-primary-foreground ${FOCUS}`}
+                    >
+                      <Square size={13} aria-hidden />
+                    </button>
+                  </div>
+                ) : (
+                  <div className="mt-2 flex gap-2">
+                    <input
+                      type="text"
+                      value={chatInput}
+                      onChange={(e) => setChatInput(e.target.value)}
+                      placeholder="write back — encrypted to this link"
+                      aria-label="Chat with recipient"
+                      maxLength={500}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") sendChat();
+                      }}
+                      className={`flex-1 rounded-lg border border-border bg-background/60 px-3 py-2 font-mono text-xs text-foreground outline-none transition placeholder:text-subtle focus:border-primary/60 ${FOCUS}`}
+                    />
+                    {chatInput.trim() ? (
+                      <button
+                        type="button"
+                        onClick={sendChat}
+                        disabled={chatBusy}
+                        className={`rounded-lg border border-primary/50 px-4 font-mono text-xs text-primary-soft transition hover:bg-primary hover:text-primary-foreground disabled:opacity-50 ${FOCUS}`}
+                      >
+                        {chatBusy ? "…" : "send"}
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={toggleRecord}
+                        disabled={chatBusy}
+                        aria-label="Record a voice note"
+                        title="record a voice note (15s max)"
+                        className={`rounded-lg border border-primary/50 px-3.5 text-primary-soft transition hover:bg-primary hover:text-primary-foreground disabled:opacity-50 ${FOCUS}`}
+                      >
+                        <Mic size={15} aria-hidden />
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
               )}
@@ -674,6 +995,15 @@ export default function Home() {
             {copied ? "Copied — send it" : "Copy link"}
           </Button>
 
+          {result.signer && (
+            <p className="font-mono text-[11px] text-subtle">
+              signed by your session wallet{" "}
+              <span className="text-primary-soft">
+                {result.signer.slice(0, 10)}…{result.signer.slice(-6)}
+              </span>{" "}
+              — this browser holds the key, nothing else does
+            </p>
+          )}
           <p className="text-xs text-subtle">
             Entity expires at block {result.expiresAt} ·{" "}
             <a

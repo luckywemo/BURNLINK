@@ -9,6 +9,9 @@ import EmberField from "@/components/EmberField";
 import ScrambleText from "@/components/ScrambleText";
 import { arkivPublic } from "@/lib/arkiv-public";
 import { decryptNote, encryptReply } from "@/lib/note-crypto";
+import { fetchReplyThread, type ChatMsg } from "@/lib/reply-thread";
+import { startVoiceNote, audioEnvelope, type VoiceRecorder } from "@/lib/voice-note";
+import { Mic, Square } from "lucide-react";
 import { splitNotePayload } from "@/lib/image-note";
 import { useReducedMotion } from "@/lib/use-reduced-motion";
 import { EMBER_SOFT } from "@/lib/tokens";
@@ -17,6 +20,7 @@ type Phase =
   | "loading"
   | "no-key"
   | "locked"
+  | "error"
   | "gone"
   | "reading"
   | "burning"
@@ -33,8 +37,10 @@ export default function NoteClient({ noteKey }: { noteKey: string }) {
   const [note, setNote] = useState<{
     text: string;
     img?: string;
+    audio?: string;
     once: boolean;
     allowReplies: boolean;
+    msgTtl: number;
     creator?: string;
     expiresAt?: bigint;
   } | null>(null);
@@ -50,13 +56,18 @@ export default function NoteClient({ noteKey }: { noteKey: string }) {
   const [extMsg, setExtMsg] = useState("");
   const [replyText, setReplyText] = useState("");
   const [replyBusy, setReplyBusy] = useState(false);
-  const [replySent, setReplySent] = useState(false);
+  const [chat, setChat] = useState<ChatMsg[]>([]);
+  const [urlKey, setUrlKey] = useState("");
+  const [recSecs, setRecSecs] = useState<number | null>(null);
+  const recRef = useRef<VoiceRecorder | null>(null);
+  const recTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pendingRef = useRef<{
     parsed: { v: number; iv: string; ct: string };
     urlKey: string;
     burnToken: string;
     once: boolean;
     allowReplies: boolean;
+    msgTtl: number;
     creator?: string;
     expiresAt?: bigint;
   } | null>(null);
@@ -71,25 +82,69 @@ export default function NoteClient({ noteKey }: { noteKey: string }) {
       const hash = new URLSearchParams(location.hash.slice(1));
       const urlKey = hash.get("k");
       const burnToken = hash.get("b") ?? "";
+      setUrlKey(urlKey ?? "");
       if (!urlKey) {
         setPhase("no-key");
         return;
       }
+      // Fresh entities take a while to appear on the read path — a
+      // just-sealed note can hang getEntity for tens of seconds while the
+      // indexer catches up. Poll patiently; only give up after ~60s, and
+      // distinguish "the store keeps saying absent" (gone) from "the RPC
+      // never answered" (error).
       let entity;
-      try {
-        entity = await arkivPublic.getEntity(noteKey as `0x${string}`);
-      } catch {
-        setPhase("gone");
+      let rejects = 0;
+      const deadline = Date.now() + 60_000;
+      while (Date.now() < deadline) {
+        try {
+          const e = await Promise.race([
+            arkivPublic.getEntity(noteKey as `0x${string}`),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error("fetch-timeout")), 12_000)
+            ),
+          ]);
+          if (e) {
+            entity = e;
+            break;
+          }
+          rejects++; // absent — could be indexer lag, keep polling
+          if (rejects >= 4) {
+            setPhase("gone");
+            return;
+          }
+        } catch (e) {
+          if (!(e instanceof Error && e.message === "fetch-timeout")) {
+            rejects++;
+            if (rejects >= 4) {
+              setPhase("gone");
+              return;
+            }
+          }
+        }
+        await new Promise((r) => setTimeout(r, 2500));
+        if (cancelled) return;
+      }
+      if (!entity) {
+        setPhase(rejects > 0 ? "gone" : "error");
         return;
       }
       if (cancelled) return;
 
-      const parsed = entity.toJson() as { v: number; iv: string; ct: string };
+      let parsed: { v: number; iv: string; ct: string };
+      try {
+        parsed = entity.toJson() as typeof parsed;
+      } catch {
+        setPhase("error");
+        return;
+      }
       const modeAttr = entity.attributes?.mode as
         | { value?: string }
         | undefined;
       const pwAttr = entity.attributes?.pw as { value?: number } | undefined;
       const repliesAttr = entity.attributes?.replies as
+        | { value?: number }
+        | undefined;
+      const msgTtlAttr = entity.attributes?.msgttl as
         | { value?: number }
         | undefined;
       const once = (modeAttr?.value ?? "timed") === "once";
@@ -100,6 +155,8 @@ export default function NoteClient({ noteKey }: { noteKey: string }) {
         burnToken,
         once,
         allowReplies: repliesAttr?.value === 1,
+        msgTtl:
+          typeof msgTtlAttr?.value === "number" ? msgTtlAttr.value : 86400,
         creator: entity.creator,
         expiresAt: entity.expiresAt,
       };
@@ -108,7 +165,9 @@ export default function NoteClient({ noteKey }: { noteKey: string }) {
         setPhase("locked");
         return;
       }
-      await openSeal();
+      const ok = await openSeal();
+      // a present-but-wrong key fails GCM — don't spin "breaking" forever
+      if (ok === false) setPhase("error");
     })();
     return () => {
       cancelled = true;
@@ -124,12 +183,14 @@ export default function NoteClient({ noteKey }: { noteKey: string }) {
     if (!p) return;
     try {
       const text = await decryptNote(p.parsed.iv, p.parsed.ct, p.urlKey, passphrase);
-      const { text: body, img } = splitNotePayload(text);
+      const { text: body, img, audio } = splitNotePayload(text);
       setNote({
         text: body,
         img,
+        audio,
         once: p.once,
         allowReplies: p.allowReplies,
+        msgTtl: p.msgTtl,
         creator: p.creator,
         expiresAt: p.expiresAt,
       });
@@ -236,6 +297,28 @@ export default function NoteClient({ noteKey }: { noteKey: string }) {
     return () => clearTimeout(t);
   }, [secsLeft, phase, noteKey]);
 
+  // The recipient's side of the chat: poll reply entities tagged `replyto`
+  // and decrypt with the link-derived key — works even after the note burns,
+  // since replies are their own entities with their own lifetimes.
+  useEffect(() => {
+    if (!urlKey) return;
+    let stop = false;
+    const tick = async () => {
+      try {
+        const t = await fetchReplyThread(noteKey, urlKey, "r");
+        if (!stop) setChat(t);
+      } catch {
+        /* query hiccup — retry next tick */
+      }
+    };
+    tick();
+    const id = setInterval(tick, 8000);
+    return () => {
+      stop = true;
+      clearInterval(id);
+    };
+  }, [noteKey, urlKey]);
+
   useEffect(() => {
     if ((phase === "gone" || phase === "dead") && !burnedBurstDone.current) {
       burnedBurstDone.current = true;
@@ -292,35 +375,132 @@ export default function NoteClient({ noteKey }: { noteKey: string }) {
 
   // Reply: a fresh entity tagged `replyto` = this note's key, encrypted to a
   // key derived from the link fragment — readable only by link-holders.
-  async function sendReply() {
+  // Reply: a fresh entity tagged `replyto` = this note's key and `from` = "r",
+  // encrypted to a key derived from the link fragment — readable only by
+  // link-holders. Messages flow both ways; this is one side of the thread.
+  async function postChat(payload: string, preview: ChatMsg) {
     const p = pendingRef.current;
-    if (!p || !replyText.trim() || replyBusy) return;
+    if (!p || replyBusy) return;
     setReplyBusy(true);
     try {
-      const { iv, ct } = await encryptReply(replyText.trim(), p.urlKey);
+      const { iv, ct } = await encryptReply(payload, p.urlKey);
       const r = await fetch("/api/notes", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ iv, ct, ttl: 86400, once: false, replyTo: noteKey }),
+        body: JSON.stringify({
+          iv,
+          ct,
+          ttl: p.msgTtl,
+          once: false,
+          replyTo: noteKey,
+          from: "r",
+        }),
       });
       if (!r.ok) throw new Error();
-      setReplySent(true);
-      setReplyText("");
+      setChat((c) => [...c, preview]);
     } catch {
       setExtMsg("reply failed — try again");
     }
     setReplyBusy(false);
   }
 
+  async function sendReply() {
+    const msg = replyText.trim();
+    if (!msg) return;
+    await postChat(msg, { self: true, text: msg, at: BigInt(Date.now()) });
+    setReplyText("");
+  }
+
+  // Voice note: 15s cap, encrypted inside the same envelope — the chain
+  // sees only ciphertext, identical to any other message.
+  async function toggleRecord() {
+    if (recRef.current) {
+      const rec = recRef.current;
+      recRef.current = null;
+      if (recTimerRef.current) clearInterval(recTimerRef.current);
+      recTimerRef.current = null;
+      setRecSecs(null);
+      const dataUrl = await rec.stop();
+      if (dataUrl) {
+        await postChat(audioEnvelope(dataUrl), {
+          self: true,
+          text: "voice note",
+          at: BigInt(Date.now()),
+          audio: dataUrl,
+        });
+      } else {
+        setExtMsg("voice note too big for an entity — keep it shorter");
+      }
+      return;
+    }
+    try {
+      recRef.current = await startVoiceNote();
+    } catch {
+      setExtMsg("mic unavailable — permission denied?");
+      return;
+    }
+    setRecSecs(0);
+    const t0 = Date.now();
+    recTimerRef.current = setInterval(() => {
+      const s = Math.floor((Date.now() - t0) / 1000);
+      if (s >= 15) {
+        toggleRecord();
+      } else {
+        setRecSecs(s);
+      }
+    }, 250);
+  }
+
+  const fmtMsgTtl = (s: number) =>
+    s < 60 ? `${s}s` : s < 3600 ? `${s / 60} min` : s < 86400 ? `${s / 3600}h` : `${s / 86400}d`;
+
   const replyBlock = (
     <div className="space-y-2">
       <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-primary-soft">
-        reply to the sender
+        chat — on-chain, encrypted to this link
       </p>
-      {replySent ? (
-        <p className="text-xs text-subtle">
-          Reply sealed on-chain — the sender sees it while their page is open.
-        </p>
+      <p className="text-[11px] text-subtle">
+        messages burn {fmtMsgTtl(pendingRef.current?.msgTtl ?? 86400)} after
+        sending — deleted by the protocol, one by one
+      </p>
+      {chat.length > 0 && (
+        <ul className="space-y-2">
+          {chat.map((m, i) => (
+            <li
+              key={i}
+              className={`animate-rise max-w-[85%] rounded-md border px-3 py-2 font-mono text-xs text-foreground ${
+                m.self
+                  ? "ml-auto border-primary/40 bg-primary/10"
+                  : "border-border bg-background/60"
+              }`}
+            >
+              <span className="mb-0.5 block text-[10px] uppercase tracking-widest text-subtle">
+                {m.self ? "you" : "sender"}
+              </span>
+              {m.audio ? (
+                <audio controls src={m.audio} className="h-8 max-w-[220px]" />
+              ) : (
+                m.text
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {recSecs !== null ? (
+        <div className="flex items-center gap-3 rounded-lg border border-primary/50 bg-card/80 px-3 py-2">
+          <span className="animate-pulse font-mono text-xs text-destructive">●</span>
+          <span className="flex-1 font-mono text-xs text-primary-soft">
+            recording… 0:{String(recSecs).padStart(2, "0")} / 0:15
+          </span>
+          <button
+            type="button"
+            onClick={toggleRecord}
+            aria-label="Stop and send voice note"
+            className={`rounded-md border border-primary/50 p-1.5 text-primary-soft transition hover:bg-primary hover:text-primary-foreground ${FOCUS}`}
+          >
+            <Square size={13} aria-hidden />
+          </button>
+        </div>
       ) : (
         <div className="flex gap-2">
           <input
@@ -335,14 +515,27 @@ export default function NoteClient({ noteKey }: { noteKey: string }) {
             }}
             className={`flex-1 rounded-lg border border-border bg-card/80 px-3 py-2 font-mono text-sm text-foreground outline-none transition placeholder:text-subtle focus:border-primary/60 ${FOCUS}`}
           />
-          <button
-            type="button"
-            onClick={sendReply}
-            disabled={replyBusy || !replyText.trim()}
-            className={`rounded-lg border border-primary/50 px-4 font-mono text-xs text-primary-soft transition hover:bg-primary hover:text-primary-foreground disabled:opacity-50 ${FOCUS}`}
-          >
-            {replyBusy ? "…" : "send"}
-          </button>
+          {replyText.trim() ? (
+            <button
+              type="button"
+              onClick={sendReply}
+              disabled={replyBusy}
+              className={`rounded-lg border border-primary/50 px-4 font-mono text-xs text-primary-soft transition hover:bg-primary hover:text-primary-foreground disabled:opacity-50 ${FOCUS}`}
+            >
+              {replyBusy ? "…" : "send"}
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={toggleRecord}
+              disabled={replyBusy}
+              aria-label="Record a voice note"
+              title="record a voice note (15s max)"
+              className={`rounded-lg border border-primary/50 px-3.5 text-primary-soft transition hover:bg-primary hover:text-primary-foreground disabled:opacity-50 ${FOCUS}`}
+            >
+              <Mic size={15} aria-hidden />
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -454,6 +647,24 @@ export default function NoteClient({ noteKey }: { noteKey: string }) {
         </div>
       )}
 
+      {phase === "error" && (
+        <div className="space-y-3">
+          <p className="text-xl font-semibold">Couldn&apos;t break the seal.</p>
+          <p className="text-muted-foreground">
+            The link looks damaged — maybe it was copied before the text
+            finished resolving, or the network didn&apos;t answer in time.
+            Get a fresh copy of the full link and try again.
+          </p>
+          <button
+            type="button"
+            onClick={() => location.reload()}
+            className={`inline-flex items-center gap-1.5 rounded-lg border border-primary/50 px-4 py-2 font-mono text-xs text-primary-soft transition hover:bg-primary hover:text-primary-foreground ${FOCUS}`}
+          >
+            try again
+          </button>
+        </div>
+      )}
+
       {(phase === "gone" || phase === "dead") && (
         <div className="space-y-4">
           <Card className="bg-card/60 p-6">
@@ -484,8 +695,15 @@ export default function NoteClient({ noteKey }: { noteKey: string }) {
             </p>
           ) : null}
           {phase === "dead" &&
-            pendingRef.current?.allowReplies &&
+            (pendingRef.current?.allowReplies || chat.length > 0) &&
             replyBlock}
+          {phase === "gone" && chat.length > 0 && replyBlock}
+          <Link
+            href="/"
+            className={`inline-flex items-center gap-1.5 rounded-lg border border-primary/50 px-4 py-2 font-mono text-xs text-primary-soft transition hover:bg-primary hover:text-primary-foreground ${FOCUS}`}
+          >
+            pass it on — seal your own note →
+          </Link>
         </div>
       )}
 
@@ -508,7 +726,19 @@ export default function NoteClient({ noteKey }: { noteKey: string }) {
             ref={cardRef}
             className={`relative p-5 ${ignite && reduced ? "animate-fadeburn" : ""}`}
           >
-            {note.img ? (
+            {note.audio ? (
+              <>
+                <audio
+                  controls
+                  src={note.audio}
+                  onCanPlay={() => setRevealed(true)}
+                  className="w-full"
+                />
+                <p className="mt-3 text-[11px] font-semibold uppercase tracking-[0.2em] text-primary-soft">
+                  voice note — decrypted in this tab only
+                </p>
+              </>
+            ) : note.img ? (
               <>
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
@@ -630,7 +860,14 @@ export default function NoteClient({ noteKey }: { noteKey: string }) {
             </ul>
           </details>
 
-          {phase === "reading" && note.allowReplies && replyBlock}
+          {phase === "reading" && (note.allowReplies || chat.length > 0) && replyBlock}
+
+          <Link
+            href="/"
+            className={`inline-flex w-fit items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 font-mono text-[11px] text-subtle transition hover:border-primary/60 hover:text-primary-soft ${FOCUS}`}
+          >
+            pass it on — seal your own note →
+          </Link>
         </div>
       )}
 

@@ -10,7 +10,8 @@ Built for **Arkiv: Global Tour Stop 🌍** (9–18 Oct 2026). Tracks entered:
 
 ## How it works
 
-1. You type a note — or attach an **image**. The browser encrypts it with
+1. You type a note — or attach an **image**, or record a **voice note**
+   (15 s Opus clip). The browser encrypts it with
    **AES-GCM-256** (WebCrypto).
 2. Only the ciphertext becomes an Arkiv entity — `{ iv, ct, bh }` — with the
    Entity Expiration you picked (15 seconds → 30 days).
@@ -36,8 +37,14 @@ Built for **Arkiv: Global Tour Stop 🌍** (9–18 Oct 2026). Tracks entered:
   link-holders.
 - **QR hand-off** — the link QR is generated locally; the key never leaves the
   browser.
-- **Live sealed counter** — `getEntityNonce` on the relay; burns still count.
+- **Live counter** — counts `type = "burnlink"` entities on-chain (attribute
+  query, so session-signed notes count too).
 - **Sender retract** — kill the link right after sealing.
+- **Invisible session wallet** — on page load the browser generates a
+  disposable keypair and `/api/fund` drips it ~0.005 GLM. When funded, the
+  note is created by `createEntity` signed **in the browser** — the sender
+  provably owns the entity (unique `$creator`) without ever seeing a wallet.
+  Falls back to the shared relay if the drip hasn't landed.
 
 ## Why Arkiv is load-bearing
 
@@ -67,9 +74,11 @@ Requires Node ≥ 20 and [`@arkiv-network/sdk@0.8.1`](https://www.npmjs.com/pack
 
 ## Design notes
 
-- **Relay wallet** signs all note writes so users need no wallet — consumer UX
-  and a privacy property: every note shares one `$creator`, unlinkable to its
-  author.
+- **Session wallet → relay fallback** — the preferred path signs note writes
+  with a disposable browser-generated keypair (gas dripped via `/api/fund`,
+  rate-limited per address/IP/hour). If unfunded, the **relay wallet** signs
+  instead — consumer UX plus a privacy property: relay notes share one
+  `$creator`, unlinkable to their authors.
 - **Burn token** (`bh`): entity keys are enumerable via `$creator`, so deletion
   requires the token whose SHA-256 is in the payload — carried only in the link
   fragment. See `arkiv/schema.md`.

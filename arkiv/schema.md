@@ -15,15 +15,17 @@ Everything below is on the **Tiramisu testnet** (chain ID `7738577`).
 | `attributes.mode` | `str` `"once"` \| `"timed"` | burn-after-read vs expire-only. |
 | `attributes.pw` | `i32` `1` (optional) | passphrase-gated note — the read page shows a gate. The passphrase itself is never transmitted or stored; it's only a KDF input in the browser. |
 | `attributes.replies` | `i32` `1` (optional) | sender opted in to replies — the read page offers a reply box. |
+| `attributes.msgttl` | `i32` seconds (optional, default 86400) | sender-chosen per-message burn time for chat entities — every message expires this many seconds after it is sent, one by one. |
 | `expires` | `ExpirationTime.fromSeconds(ttl)`, ttl ∈ [15s, 30d] — presets or custom | User-chosen Entity Expiration — the protocol deletes the ciphertext, not us. |
 
 Still only ~5 attributes — deliberately few (privacy pillar: what the explorer
 shows is minimal, and nothing but ciphertext is ever in the payload).
 
-**Plaintext envelope.** The decrypted plaintext is either raw UTF-8 text, or a
+**Plaintext envelope.** The decrypted plaintext is either raw UTF-8 text, a
 JSON envelope `{"i":"data:image/…"}` for image notes (browser-side downscale to
-fit the 128 KiB entity cap). The envelope lives *inside* the ciphertext — the
-chain can't distinguish a text note from an image note.
+fit the 128 KiB entity cap), or `{"a":"data:audio/webm;base64,…"}` for voice
+notes (Opus ~24 kbps, 15 s cap ≈ 45 KB). Envelopes live *inside* the
+ciphertext — the chain can't distinguish text, image, and audio notes.
 
 **Passphrase layer.** With `pw`, the link fragment carries a 32-byte *seed* and
 the AES key is derived in-browser via PBKDF2-SHA-256 (600k iterations) over
@@ -46,7 +48,11 @@ else can.
 | `attributes.v` | `i32` `1` | schema version |
 | `attributes.mode` | `str` `"timed"` | replies always expire — they die too |
 | `attributes.replyto` | `str` `<original entity key>` | the pointer the sender's page queries on |
-| `expires` | 24h | protocol-enforced, same as notes |
+| `attributes.from` | `str` `"s"` \| `"r"` (optional) | which side of the chat wrote it — sender or recipient — so both pages render the thread correctly |
+| `expires` | `msgttl` seconds from send (default 24h) | each message self-destructs on its own clock — protocol-enforced, same as notes |
+
+Reply plaintext is raw UTF-8 text or the same `{"a":"data:audio/…"}` voice-note
+envelope — MediaRecorder Opus at ~24 kbps, 15 s cap, all inside the ciphertext.
 
 Replies carry **no `bh`** — they can't be burned early by anyone, they simply
 expire. Replies can outlive the note they answer (a burn-after-read note is
@@ -54,14 +60,16 @@ deleted on read; the sender may still have their page open to receive replies).
 
 ## Mutations the app performs
 
-- `createEntity` — notes and replies (relay-signed)
+- `createEntity` — notes (session-wallet-signed when funded, else relay) and
+  replies (relay-signed)
 - `deleteEntity` — burn-after-read, holder-initiated "burn it now", sender retract
 - `extendEntity` — "+5 min / +1 hour" on a live timed note, gated by the same `bh`
 
 ## System attributes used
 
-- `$creator` — the relay address; proves which entities BurnLink wrote (and is
-  the query judges use to enumerate our ciphertext).
+- `$creator` — the session wallet's disposable address when browser-signing
+  succeeded, else the relay address; proves which entities BurnLink wrote (and
+  is the query judges use to enumerate our ciphertext).
 - `$expiresAt` — shown to the reader in the on-chain proof panel.
 
 ## Queries the app runs
@@ -70,14 +78,15 @@ deleted on read; the sender may still have their page open to receive replies).
 |---|---|---|
 | Read page | `getEntity(entityKey)` — public client, no credentials | fetch ciphertext + attributes; the read path needs nothing from our backend |
 | Sender page | `select * where replyto = str(<entityKey>)` | poll for replies addressed to a sealed note — the chain is the mailbox |
-| Landing | `getEntityNonce(relay)` | the "N sealed on-chain" counter — counts burned notes too (nonce never decreases) |
+| Landing | `select * where type = str("burnlink")` | the "N live on-chain" counter — attribute query, so session-signed notes count too |
 | Repro check | `select * where $creator = addr(0x4d3Af8811dB4D23D1cb0Ad8355c419d05fd467AB)` | enumerate BurnLink's ciphertext entities — works in the public Data Explorer |
 
 ## Wallets that create entities
 
 | Address | Role |
 |---|---|
-| `0x4d3Af8811dB4D23D1cb0Ad8355c419d05fd467AB` | Relay — signs `createEntity` for sealed notes and `deleteEntity` for burn-after-read. Holds only test GLM. Being the shared `$creator` is a privacy feature: notes are unlinkable to authors. |
+| ephemeral (per-session) | Preferred path — the browser generates a disposable keypair on page load, `/api/fund` drips it ~0.005 GLM, and the note's `createEntity` is signed client-side. The sender provably owns the entity (unique `$creator`) with no wallet UX. |
+| `0x4d3Af8811dB4D23D1cb0Ad8355c419d05fd467AB` | Relay — funds session wallets and signs `createEntity`/`deleteEntity` as fallback. Holds only test GLM. Being the shared `$creator` for relay notes is a privacy feature: they are unlinkable to authors. |
 
 ## What deliberately stays off Arkiv
 

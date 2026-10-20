@@ -69,21 +69,38 @@ export async function imageToNoteDataUrl(file: File): Promise<string> {
 }
 
 // The plaintext sent through encryptNote. Text stays raw (backwards
-// compatible with every existing link); images get the JSON envelope.
-export function notePlaintext(text: string, img: string | null): string {
-  return img ? JSON.stringify({ i: img }) : text;
+// compatible with every existing link); images and voice notes get a JSON
+// envelope — on-chain they're all just ciphertext.
+export function notePlaintext(
+  text: string,
+  img: string | null,
+  audio?: string | null
+): string {
+  if (img) return JSON.stringify({ i: img });
+  if (audio) return JSON.stringify({ a: audio });
+  return text;
 }
 
-// Inverse on the read side: try the image envelope, else it's text.
+// Inverse on the read side: try the media envelopes, else it's text.
 export function splitNotePayload(raw: string): {
   text: string;
   img?: string;
+  audio?: string;
 } {
   if (raw.startsWith('{"i":"')) {
     try {
       const img = JSON.parse(raw).i;
       if (typeof img === "string" && img.startsWith("data:image/"))
         return { text: "", img };
+    } catch {
+      /* fall through — treat as text */
+    }
+  }
+  if (raw.startsWith('{"a":"')) {
+    try {
+      const a = JSON.parse(raw).a;
+      if (typeof a === "string" && a.startsWith("data:audio/"))
+        return { text: "", audio: a };
     } catch {
       /* fall through — treat as text */
     }

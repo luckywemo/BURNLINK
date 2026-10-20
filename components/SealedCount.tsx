@@ -2,22 +2,34 @@
 
 import { useEffect, useState } from "react";
 import { arkivPublic } from "@/lib/arkiv-public";
-import { RELAY_ADDRESS } from "@/lib/tokens";
+import { str } from "@arkiv-network/sdk";
+import { eq } from "@arkiv-network/sdk/query";
 
-// Live on-chain stat: how many entities the relay has ever created on
-// Tiramisu. The nonce never decreases — burned notes still count, which is
-// exactly the "sealed" number we want to show.
+// Live on-chain stat: every *live* `type = "burnlink"` entity on Tiramisu.
+// Counted by attribute rather than creator because notes are now signed by
+// disposable session wallets — there is no single address to take a nonce of.
 export default function SealedCount() {
-  const [n, setN] = useState<bigint | null>(null);
+  const [n, setN] = useState<number | null>(null);
 
   useEffect(() => {
     let live = true;
-    arkivPublic
-      .getEntityNonce(RELAY_ADDRESS)
-      .then((v) => {
-        if (live) setN(v);
-      })
-      .catch(() => {});
+    (async () => {
+      try {
+        const q = arkivPublic
+          .select("*")
+          .where(eq("type", str("burnlink")));
+        let total = 0;
+        for (let i = 0; i < 10; i++) {
+          const page = await q.fetch();
+          total += page.entities.length;
+          if (!page.cursor) break;
+          q.cursor(page.cursor);
+        }
+        if (live) setN(total);
+      } catch {
+        /* counter is decorative — fail quiet */
+      }
+    })();
     return () => {
       live = false;
     };
@@ -25,7 +37,5 @@ export default function SealedCount() {
 
   if (n === null) return null;
 
-  return (
-    <span className="font-mono text-primary">{n.toString()} sealed on-chain</span>
-  );
+  return <span className="font-mono text-primary">{n} live on-chain</span>;
 }
